@@ -117,7 +117,7 @@ We recommend using default hyperparameters for single-task online RL, including 
 **As of Jan 7, 2024 the TD-MPC2 codebase also supports multi-GPU training for multi-task offline RL experiments**; use branch `distributed` and argument `world_size=N` to train on `N` GPUs. We cannot guarantee that distributed training will yield the same results, but they appear to be similar based on our limited testing.
 
 ----
-
+    
 ## Citation
 
 If you find our work useful, please consider citing our paper as follows:

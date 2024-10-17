@@ -1,7 +1,7 @@
 from copy import deepcopy
 import warnings
 
-import gym
+import gymnasium as gym
 
 from envs.wrappers.multitask import MultitaskWrapper
 from envs.wrappers.pixels import PixelWrapper

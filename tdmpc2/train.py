@@ -1,5 +1,5 @@
 import os
-os.environ['MUJOCO_GL'] = 'egl'
+os.environ['MUJOCO_GL'] = 'glfw'
 os.environ['LAZY_LEGACY_OP'] = '0'
 import warnings
 warnings.filterwarnings('ignore')
@@ -42,9 +42,20 @@ def train(cfg: dict):
 	"""
 	assert torch.cuda.is_available()
 	assert cfg.steps > 0, 'Must train for at least 1 step.'
+
+	use_tensorboard = cfg.get('use_tensorboard', False)
+	tensorboard_is_available = False
+	if use_tensorboard:
+		try:
+			from torch.utils.tensorboard import SummaryWriter
+			tensorboard_is_available = True
+		except ImportError:
+			print('Tensorboard is not available. Please install it with `pip install tensorboard`.')
 	cfg = parse_cfg(cfg)
 	set_seed(cfg.seed)
 	print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
+
+	cfg.use_tensorboard = use_tensorboard and tensorboard_is_available
 
 	trainer_cls = OfflineTrainer if cfg.multitask else OnlineTrainer
 	trainer = trainer_cls(

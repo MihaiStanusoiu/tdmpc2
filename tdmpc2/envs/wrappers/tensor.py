@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
 

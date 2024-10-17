@@ -9,6 +9,7 @@ obs: state
 checkpoint: ???
 eval_episodes: 10
 eval_freq: 50000
+use_tensorboard: True
 
 # training
 steps: 10_000_000
