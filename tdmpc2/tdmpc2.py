@@ -88,7 +88,7 @@ class TDMPC2:
 		if self.cfg.mpc:
 			a = self.plan(z, t0=t0, eval_mode=eval_mode, task=task)
 		else:
-			a = self.model.pi(z, task)[int(not eval_mode)][0]
+			a = self.model.pi(z, task)[0][int(not eval_mode)][0]
 		return a.cpu()
 
 	@torch.no_grad()
@@ -96,11 +96,14 @@ class TDMPC2:
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		for t in range(self.cfg.horizon):
-			reward = math.two_hot_inv(self.model.reward(z, actions[t], task), self.cfg)
-			z = self.model.next(z, actions[t], task)
+			a, inter_h = self.model.pi(z, task)
+			h = inter_h[0]
+			reward = math.two_hot_inv(self.model.reward(h, actions[t], task), self.cfg)
+			z = self.model.next(h, actions[t], task)
 			G += discount * reward
 			discount *= self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
-		return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
+		a, inter_h = self.model.pi(z, task)
+		return G + discount * self.model.Q(inter_h[1], a[1], task, return_type='avg')
 
 	@torch.no_grad()
 	def plan(self, z, t0=False, eval_mode=False, task=None):
@@ -121,9 +124,11 @@ class TDMPC2:
 			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_z = z.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
-				pi_actions[t] = self.model.pi(_z, task)[1]
-				_z = self.model.next(_z, pi_actions[t], task)
-			pi_actions[-1] = self.model.pi(_z, task)[1]
+				a, h = self.model.pi(_z, task)
+				pi_actions[t] = a[1]
+				_z = self.model.next(h[0], pi_actions[t], task)
+			a, _ = self.model.pi(_z, task)
+			pi_actions[-1] = a[1]
 
 		# Initialize state and parameters
 		z = z.repeat(self.cfg.num_samples, 1)
@@ -183,8 +188,9 @@ class TDMPC2:
 		"""
 		self.pi_optim.zero_grad(set_to_none=True)
 		self.model.track_q_grad(False)
-		_, pis, log_pis, _ = self.model.pi(zs, task)
-		qs = self.model.Q(zs, pis, task, return_type='avg')
+		act, inter_h = self.model.pi(zs, task)
+		_, pis, log_pis, _ = act
+		qs = self.model.Q(inter_h[1], pis, task, return_type='avg')
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
 
@@ -192,7 +198,7 @@ class TDMPC2:
 		rho = torch.pow(self.cfg.rho, torch.arange(len(qs), device=self.device))
 		pi_loss = ((self.cfg.entropy_coef * log_pis - qs).mean(dim=(1,2)) * rho).mean()
 		pi_loss.backward()
-		torch.nn.utils.clip_grad_norm_(self.model._pi.parameters(), self.cfg.grad_clip_norm)
+		torch.nn.utils.clip_grad_norm_(self.model.hidden_layer[-1].parameters(), self.cfg.grad_clip_norm)
 		self.pi_optim.step()
 		self.model.track_q_grad(True)
 
@@ -211,9 +217,10 @@ class TDMPC2:
 		Returns:
 			torch.Tensor: TD-target.
 		"""
-		pi = self.model.pi(next_z, task)[1]
+		act, inter_h = self.model.pi(next_z, task)
+		pi = act[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
-		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
+		return reward + discount * self.model.Q(inter_h[1], pi, task, return_type='min', target=True)
 
 	def update(self, buffer):
 		"""
@@ -237,19 +244,26 @@ class TDMPC2:
 		self.model.train()
 
 		# Latent rollout
+		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.model.hidden_state_dim(0), device=self.device)
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		z = self.model.encode(obs[0], task)
+		initial_inter_h = self.model.get_initial_h()
+		hs[0] = initial_inter_h[1]
 		zs[0] = z
 		consistency_loss = 0
 		for t in range(self.cfg.horizon):
-			z = self.model.next(z, action[t], task)
+			
+			_, inter_h = self.model.pi(z, task)
+			h = inter_h[0]
+			z = self.model.next(h, action[t], task)
 			consistency_loss += F.mse_loss(z, next_z[t]) * self.cfg.rho**t
+			hs[t+1] = h
 			zs[t+1] = z
 
 		# Predictions
-		_zs = zs[:-1]
-		qs = self.model.Q(_zs, action, task, return_type='all')
-		reward_preds = self.model.reward(_zs, action, task)
+		_hs = hs[:-1]
+		qs = self.model.Q(_hs, action, task, return_type='all')
+		reward_preds = self.model.reward(_hs, action, task)
 		
 		# Compute losses
 		reward_loss, value_loss = 0, 0

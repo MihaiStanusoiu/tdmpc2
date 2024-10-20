@@ -1,3 +1,4 @@
+import ncps.wirings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -121,7 +122,6 @@ def mlp(in_dim, mlp_dims, out_dim, act=None, dropout=0.):
 	mlp.append(NormedLinear(dims[-2], dims[-1], act=act) if act else nn.Linear(dims[-2], dims[-1]))
 	return nn.Sequential(*mlp)
 
-
 def conv(in_shape, num_channels, act=None):
 	"""
 	Basic convolutional encoder for TD-MPC2 with raw image observations.
@@ -151,3 +151,24 @@ def enc(cfg, out={}):
 		else:
 			raise NotImplementedError(f"Encoder for observation type {k} not implemented.")
 	return nn.ModuleDict(out)
+
+def world_model_wiring(units, latent_dim, output_dim, density_level=0.5, seed=22222):
+	motor_neurons = output_dim
+	inter_and_command_neurons = units - output_dim
+	inter_neurons = latent_dim
+	command_neurons = inter_and_command_neurons - inter_neurons
+
+	sensory_fanout = max(int(inter_neurons * density_level), 1)
+	inter_fanout = max(int(command_neurons * density_level), 1)
+	recurrent_command_synapses = max(int(command_neurons * density_level * 2), 1)
+	motor_fanin = max(int(command_neurons * density_level), 1)
+
+	return ncps.wirings.NCP(
+		inter_neurons,
+		command_neurons,
+		motor_neurons,
+		sensory_fanout,
+		inter_fanout,
+		recurrent_command_synapses,
+		motor_fanin,
+	)
