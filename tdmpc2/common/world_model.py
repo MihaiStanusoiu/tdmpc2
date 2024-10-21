@@ -1,4 +1,5 @@
 from copy import deepcopy
+from enum import Enum
 
 import ncps.wirings
 import numpy as np
@@ -7,6 +8,18 @@ import torch.nn as nn
 
 from common import layers, math, init
 from ncps.torch import CfC
+
+class Symbols(Enum):
+	Q = 'Q'
+	r = 'r'
+	z_next = 'z_next'
+
+# TODO: get this from config
+output_to_intermediate_h_map = {
+	Symbols.Q: 1,
+	Symbols.r: 0,
+	Symbols.z_next: 0
+}
 
 class WorldModel(nn.Module):
 	"""
@@ -24,20 +37,20 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		wiring = ncps.wirings.AutoNCP(cfg.hidden_dim, 2 * cfg.action_dim)
 		# wiring = world_model_wiring(cfg.hidden_units, cfg.latent_dim, cfg.obs_shape[0] + cfg.action_dim)
-		self._ncp = CfC(cfg.latent_dim, wiring)
+		self._ncp = CfC(cfg.latent_dim, wiring, return_sequences=False)
 		self._ncp.batch_first = False
 		self._encoder = layers.enc(cfg)
-		self._dynamics = layers.mlp(len(wiring.get_neurons_of_layer(0)) + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+		self._dynamics = layers.mlp(len(wiring.get_neurons_of_layer(output_to_intermediate_h_map[Symbols.z_next])) + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(len(wiring.get_neurons_of_layer(1)) + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
-		self._reward = layers.mlp(len(wiring.get_neurons_of_layer(0)) + cfg.action_dim + cfg.task_dim, cfg.mlp_dim, max(cfg.num_bins, 1))  # TODO: ID might not be correct here
+		self._Qs = layers.Ensemble([layers.mlp(len(wiring.get_neurons_of_layer(output_to_intermediate_h_map[Symbols.Q])) + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		self._reward = layers.mlp(len(wiring.get_neurons_of_layer(output_to_intermediate_h_map[Symbols.r])) + cfg.action_dim + cfg.task_dim, cfg.mlp_dim, max(cfg.num_bins, 1))  # TODO: ID might not be correct here
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params[-2]])
 		self._target_Qs = deepcopy(self._Qs).requires_grad_(False)
 		self.log_std_min = torch.tensor(cfg.log_std_min)
 		self.log_std_dif = torch.tensor(cfg.log_std_max) - self.log_std_min
 
-		self.initial_inter_h = [torch.zeros(1, len(wiring.get_neurons_of_layer(i))) for i in range(1, wiring.num_layers)]
+		self._initial_inter_h = [torch.zeros(len(wiring.get_neurons_of_layer(i))) for i in range(0, wiring.num_layers)]
 
 	@property
 	def total_params(self):
@@ -52,6 +65,10 @@ class WorldModel(nn.Module):
 		if layer_id not in range(self._ncp.wiring.num_layers):
 			raise ValueError(f"Invalid layer ID: {layer_id}")
 		return self._ncp.rnn_cell._layers[layer_id]
+
+	def _intermediate_h(self, h):
+		layer_sizes = [len(self._ncp.wiring.get_neurons_of_layer(i)) for i in range(self._ncp.wiring.num_layers)]
+		return torch.split(h, layer_sizes, dim=-1)
 		
 	def to(self, *args, **kwargs):
 		"""
@@ -62,6 +79,7 @@ class WorldModel(nn.Module):
 			self._action_masks = self._action_masks.to(*args, **kwargs)
 		self.log_std_min = self.log_std_min.to(*args, **kwargs)
 		self.log_std_dif = self.log_std_dif.to(*args, **kwargs)
+		self._initial_inter_h = [h.to(*args, **kwargs) for h in self._initial_inter_h]
 		return self
 	
 	def train(self, mode=True):
@@ -107,23 +125,37 @@ class WorldModel(nn.Module):
 			emb = emb.repeat(x.shape[0], 1)
 		return torch.cat([x, emb], dim=-1)
 
-	def get_initial_h(self):
-		return [torch.tanh(h) for h in self.initial_inter_h]
+	@property
+	def initial_h(self):
+		return torch.cat([torch.tanh(h) for h in self._initial_inter_h], dim=-1)
 
-	def pi(self, z, task):
+	def pi(self, z, task, h=None, return_sequences=True):
 		"""
 		Forward pass through the world model.
 		"""
+		if h is None:
+			h = self.initial_h
 		is_seq = z.ndim == 3
 		if not is_seq:
 			# unsqueeze time dim
 			z = z.unsqueeze(0)
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		output, h = self._ncp(z)
-		# squeeze time dim for output
-		if not is_seq:
-			output = output.squeeze(0)
+
+		hs = []
+		outputs = []
+		for i in range(z.shape[0]):
+			output, h = self._ncp(z[i].unsqueeze(0), h)
+			hs.append(h)
+			outputs.append(output)
+
+		if return_sequences:
+			output = torch.stack(outputs, dim=0)
+			h = torch.stack(hs, dim=0)
+		else:
+			output = outputs[-1]
+			h = hs[-1]
+
 		act_next_mu, act_next_log_std = torch.split(output, [self.cfg.action_dim, self.cfg.action_dim], dim=-1)
 		act_next_log_std = math.log_std(act_next_log_std, self.log_std_min, self.log_std_dif)
 		eps = torch.randn_like(act_next_mu)
@@ -131,9 +163,8 @@ class WorldModel(nn.Module):
 		pi = act_next_mu + eps * act_next_log_std.exp()
 		act_next_mu, pi, log_pi = math.squash(act_next_mu, pi, log_pi)
 		layer_sizes = [len(self._ncp.wiring.get_neurons_of_layer(i)) for i in range(self._ncp.wiring.num_layers)]
-		inter_h = torch.split(h, layer_sizes, dim=1)
 
-		return [act_next_mu, pi, log_pi, act_next_log_std], inter_h
+		return [act_next_mu, pi, log_pi, act_next_log_std], h
 
 	def encode(self, obs, task):
 		"""
@@ -150,15 +181,17 @@ class WorldModel(nn.Module):
 		"""
 		Predicts the next latent state given the current latent state and action.
 		"""
+		_h = self._intermediate_h(h)[output_to_intermediate_h_map[Symbols.z_next]]
 		if self.cfg.multitask:
-			h = self.task_emb(h, task)
-		h = torch.cat([h, a], dim=-1)
-		return self._dynamics(h)
+			_h = self.task_emb(_h, task)
+		_h = torch.cat([_h, a], dim=-1)
+		return self._dynamics(_h)
 	
 	def reward(self, h, a, task):
 		"""
 		Predicts instantaneous (single-step) reward.
 		"""
+		h = self._intermediate_h(h)[output_to_intermediate_h_map[Symbols.r]]
 		if self.cfg.multitask:
 			h = self.task_emb(h, task)
 		h = torch.cat([h, a], dim=-1)
@@ -203,6 +236,7 @@ class WorldModel(nn.Module):
 		"""
 		assert return_type in {'min', 'avg', 'all'}
 
+		h = self._intermediate_h(h)[output_to_intermediate_h_map[Symbols.Q]]
 		if self.cfg.multitask:
 			h = self.task_emb(h, task)
 			

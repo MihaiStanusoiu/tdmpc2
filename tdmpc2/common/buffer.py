@@ -77,9 +77,11 @@ class Buffer():
 		"""
 		obs = td['obs']
 		action = td['action'][1:]
+		h = td['h']
+		h_next = td['h']
 		reward = td['reward'][1:].unsqueeze(-1)
 		task = td['task'][0] if 'task' in td.keys() else None
-		return self._to_device(obs, action, reward, task)
+		return self._to_device(obs, action, h, h_next, reward, task)
 
 	def add(self, td):
 		"""Add an episode to the buffer."""

@@ -29,10 +29,11 @@ class OnlineTrainer(Trainer):
 		ep_rewards, ep_successes = [], []
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t = self.env.reset(), False, 0, 0
+			h = None
 			if self.cfg.save_video:
 				self.logger.video.init(self.env, enabled=(i==0))
 			while not done:
-				action = self.agent.act(obs, t0=t==0, eval_mode=True)
+				action, h = self.agent.act(obs, h=h, t0=t==0, eval_mode=True)
 				obs, reward, done, info = self.env.step(action)
 				ep_reward += reward
 				t += 1
@@ -47,7 +48,7 @@ class OnlineTrainer(Trainer):
 			episode_success=np.nanmean(ep_successes),
 		)
 
-	def to_td(self, obs, action=None, reward=None):
+	def to_td(self, obs, h = None, h_next=None, action=None, reward=None):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -57,8 +58,14 @@ class OnlineTrainer(Trainer):
 			action = torch.full_like(self.env.rand_act(), float('nan'))
 		if reward is None:
 			reward = torch.tensor(float('nan'))
+		if h is None:
+			h = self.agent.model.initial_h.cpu()
+		if h_next is None:
+			h_next = torch.tensor(float('nan'))
 		td = TensorDict(dict(
 			obs=obs,
+			h = h.unsqueeze(0),
+			h_next=h_next.unsqueeze(0),
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 		), batch_size=(1,))
@@ -67,6 +74,7 @@ class OnlineTrainer(Trainer):
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done, eval_next = {}, True, True
+		h = None
 		while self._step <= self.cfg.steps:
 
 			# Evaluate agent periodically
@@ -91,15 +99,18 @@ class OnlineTrainer(Trainer):
 					self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
+				h = None
 				self._tds = [self.to_td(obs)]
 
 			# Collect experience
+			h_next = h
 			if self._step > self.cfg.seed_steps:
-				action = self.agent.act(obs, t0=len(self._tds)==1)
+				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward))
+			self._tds.append(self.to_td(obs, h, h_next, action, reward))
+			h = h_next
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:
