@@ -38,6 +38,7 @@ class WorldModel(nn.Module):
 		wiring = ncps.wirings.AutoNCP(cfg.hidden_dim, 2 * cfg.action_dim)
 		# wiring = world_model_wiring(cfg.hidden_units, cfg.latent_dim, cfg.obs_shape[0] + cfg.action_dim)
 		self._ncp = CfC(cfg.latent_dim, wiring, return_sequences=False)
+		self._pi_act = nn.Mish(inplace=True)
 		self._ncp.batch_first = False
 		self._encoder = layers.enc(cfg)
 		self._dynamics = layers.mlp(len(wiring.get_neurons_of_layer(output_to_intermediate_h_map[Symbols.z_next])) + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
@@ -146,6 +147,7 @@ class WorldModel(nn.Module):
 		outputs = []
 		for i in range(z.shape[0]):
 			output, h = self._ncp(z[i].unsqueeze(0), h)
+			output = self._pi_act(output)
 			hs.append(h)
 			outputs.append(output)
 
