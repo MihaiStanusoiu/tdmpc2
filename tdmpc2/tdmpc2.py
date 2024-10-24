@@ -86,7 +86,7 @@ class TDMPC2:
 			task = torch.tensor([task], device=self.device)
 		z = self.model.encode(obs, task)
 		if self.cfg.mpc:
-			a, h = self.plan(z, t0=t0, h=None, eval_mode=eval_mode, task=task)
+			a, h = self.plan(z, t0=t0, h=h, eval_mode=eval_mode, task=task)
 		else:
 			a = self.model.pi(z, task)[int(not eval_mode)][0]
 		return a.cpu(), h
@@ -117,10 +117,12 @@ class TDMPC2:
 			torch.Tensor: Action to take in the environment.
 		"""		
 		# Sample policy trajectories
-		_h = h
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_z = z.repeat(self.cfg.num_pi_trajs, 1)
+			_h = h
+			if h is not None:
+				_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(_z, task)[1]
 				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
@@ -173,7 +175,7 @@ class TDMPC2:
 		if not eval_mode:
 			a += std * torch.randn(self.cfg.action_dim, device=std.device)
 		# _a = a.repeat(self.cfg.num_samples, 1)
-		_, h = self.model.next(z_orig, a.unsqueeze(0), task, h)
+		_, h = self.model.next(z_orig, a.unsqueeze(0), task, h_orig)
 		return a.clamp_(-1, 1), h
 		
 	def update_pi(self, zs, task):

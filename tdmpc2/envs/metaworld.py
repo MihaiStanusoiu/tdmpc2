@@ -42,11 +42,11 @@ def make_env(cfg):
 	"""
 	Make Meta-World environment.
 	"""
-	env_id = cfg.task.split("-", 1)[-1] + "-v2-goal-observable"
+	env_id = cfg.task.split("-", 1)[-1] + "-v2-goal-hidden"
 	if not cfg.task.startswith('mw-') or not (env_id in ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE or env_id in ALL_V2_ENVIRONMENTS_GOAL_HIDDEN):
 		raise ValueError('Unknown task:', cfg.task)
 	assert cfg.obs == 'state', 'This task only supports state observations.'
-	env = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[env_id](seed=cfg.seed)
+	env = ALL_V2_ENVIRONMENTS_GOAL_HIDDEN[env_id](seed=cfg.seed)
 	env = MetaWorldWrapper(env, cfg)
 	env = TimeLimit(env, max_episode_steps=100)
 	env.max_episode_steps = env._max_episode_steps
