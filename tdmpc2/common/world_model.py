@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+import ncps
 from ncps.torch import CfC
 from common import layers, math, init
 
@@ -24,12 +25,15 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		self._dynamics = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim, return_sequences=False)
-		self.initial_h = nn.Parameter(torch.zeros(cfg.hidden_dim))
+		self.dynamics_initial_h = nn.Parameter(torch.zeros(cfg.hidden_dim))
 		self._dynamics.batch_first = False
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		self._reward = layers.mlp(cfg.hidden_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
+		wiring = ncps.wirings.AutoNCP(cfg.hidden_dim, 2 * cfg.action_dim)
+		self._pi = CfC(cfg.latent_dim + cfg.task_dim, wiring, return_sequences=False)
+		self._pi_act = nn.Mish(inplace=True)
+		self.pi_initial_h = nn.Parameter(torch.zeros(cfg.hidden_dim))
+		self._Qs = layers.Ensemble([layers.mlp(cfg.hidden_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params[-2]])
 		self._target_Qs = deepcopy(self._Qs).requires_grad_(False)
@@ -111,6 +115,8 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
+		if h is None:
+			h = torch.tanh(self.dynamics_initial_h)
 		z = torch.cat([z, a], dim=-1)
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
@@ -121,10 +127,9 @@ class WorldModel(nn.Module):
 		"""
 		Predicts instantaneous (single-step) reward.
 		"""
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
-		return self._reward(z)
+		with torch.no_grad():
+			_, h = self.next(z, a, task)
+		return self._reward(h)
 
 	def pi(self, z, task):
 		"""
@@ -132,27 +137,39 @@ class WorldModel(nn.Module):
 		The policy prior is a Gaussian distribution with
 		mean and (log) std predicted by a neural network.
 		"""
+		if h is None:
+			h = self.pi_initial_h
+		is_seq = z.ndim == 3
+		if not is_seq:
+			# unsqueeze time dim
+			z = z.unsqueeze(0)
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 
-		# Gaussian policy prior
-		mu, log_std = self._pi(z).chunk(2, dim=-1)
-		log_std = math.log_std(log_std, self.log_std_min, self.log_std_dif)
-		eps = torch.randn_like(mu)
+		hs = []
+		outputs = []
+		for i in range(z.shape[0]):
+			output, h = self._pi(z[i].unsqueeze(0), h)
+			output = self._pi_act(output)
+			hs.append(h)
+			outputs.append(output)
 
-		if self.cfg.multitask: # Mask out unused action dimensions
-			mu = mu * self._action_masks[task]
-			log_std = log_std * self._action_masks[task]
-			eps = eps * self._action_masks[task]
-			action_dims = self._action_masks.sum(-1)[task].unsqueeze(-1)
-		else: # No masking
-			action_dims = None
+		# if return_sequences:
+		# 	output = torch.stack(outputs, dim=0)
+		# 	h = torch.stack(hs, dim=0)
+		# else:
+		output = outputs[-1]
+		h = hs[-1]
 
-		log_pi = math.gaussian_logprob(eps, log_std, size=action_dims)
-		pi = mu + eps * log_std.exp()
-		mu, pi, log_pi = math.squash(mu, pi, log_pi)
+		act_next_mu, act_next_log_std = torch.split(output, [self.cfg.action_dim, self.cfg.action_dim], dim=-1)
+		act_next_log_std = math.log_std(act_next_log_std, self.log_std_min, self.log_std_dif)
+		eps = torch.randn_like(act_next_mu)
+		log_pi = math.gaussian_logprob(eps, act_next_log_std)
+		pi = act_next_mu + eps * act_next_log_std.exp()
+		act_next_mu, pi, log_pi = math.squash(act_next_mu, pi, log_pi)
+		layer_sizes = [len(self._ncp.wiring.get_neurons_of_layer(i)) for i in range(self._ncp.wiring.num_layers)]
 
-		return mu, pi, log_pi, log_std
+		return [act_next_mu, pi, log_pi, act_next_log_std], h
 
 	def Q(self, z, a, task, return_type='min', target=False):
 		"""
@@ -165,11 +182,9 @@ class WorldModel(nn.Module):
 		"""
 		assert return_type in {'min', 'avg', 'all'}
 
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-			
-		z = torch.cat([z, a], dim=-1)
-		out = (self._target_Qs if target else self._Qs)(z)
+		with torch.no_grad():
+			_, h = self.next(z, a, task)
+		out = (self._target_Qs if target else self._Qs)(h)
 
 		if return_type == 'all':
 			return out
