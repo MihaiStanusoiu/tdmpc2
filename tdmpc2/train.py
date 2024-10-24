@@ -70,4 +70,5 @@ def train(cfg: dict):
 
 
 if __name__ == '__main__':
+	# load config from yaml
 	train()

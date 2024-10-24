@@ -8,7 +8,7 @@ suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom')
 suite.TASKS_BY_DOMAIN = suite._get_tasks_by_domain(suite.ALL_TASKS)
 from dm_control.suite.wrappers import action_scale
 from dm_env import StepType, specs
-import gymnasium as gym
+import gym
 
 
 class ExtendedTimeStep(NamedTuple):
@@ -184,6 +184,7 @@ def make_env(cfg):
 	Adapted from https://github.com/facebookresearch/drqv2
 	"""
 	domain, task = cfg.task.replace('-', '_').split('_', 1)
+	# domain, task = cfg.task.split('_', 1)
 	domain = dict(cup='ball_in_cup', pointmass='point_mass').get(domain, domain)
 	if (domain, task) not in suite.ALL_TASKS:
 		raise ValueError('Unknown task:', task)

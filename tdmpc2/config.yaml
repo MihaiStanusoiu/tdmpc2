@@ -57,6 +57,7 @@ enc_dim: 256
 num_channels: 32
 mlp_dim: 512
 latent_dim: 512
+hidden_dim: 512
 task_dim: 96
 num_q: 5
 dropout: 0.01
@@ -85,5 +86,5 @@ episode_length: ???
 obs_shapes: ???
 action_dims: ???
 episode_lengths: ???
-seed_steps: ???
+seed_steps: 10
 bin_size: ???

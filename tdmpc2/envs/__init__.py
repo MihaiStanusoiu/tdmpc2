@@ -1,7 +1,7 @@
 from copy import deepcopy
 import warnings
 
-import gymnasium as gym
+import gym
 
 from envs.wrappers.multitask import MultitaskWrapper
 from envs.wrappers.pixels import PixelWrapper
@@ -16,11 +16,11 @@ except:
 	make_dm_control_env = missing_dependencies
 try:
 	from envs.maniskill import make_env as make_maniskill_env
-except:
+except Exception as e:
 	make_maniskill_env = missing_dependencies
 try:
 	from envs.metaworld import make_env as make_metaworld_env
-except:
+except Exception as e:
 	make_metaworld_env = missing_dependencies
 try:
 	from envs.myosuite import make_env as make_myosuite_env

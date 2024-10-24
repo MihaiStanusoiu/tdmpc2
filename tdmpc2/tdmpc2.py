@@ -68,7 +68,7 @@ class TDMPC2:
 		self.model.load_state_dict(state_dict["model"])
 
 	@torch.no_grad()
-	def act(self, obs, t0=False, eval_mode=False, task=None):
+	def act(self, obs, t0=False, h=None, eval_mode=False, task=None):
 		"""
 		Select an action by planning in the latent space of the world model.
 		
@@ -86,24 +86,24 @@ class TDMPC2:
 			task = torch.tensor([task], device=self.device)
 		z = self.model.encode(obs, task)
 		if self.cfg.mpc:
-			a = self.plan(z, t0=t0, eval_mode=eval_mode, task=task)
+			a, h = self.plan(z, t0=t0, h=None, eval_mode=eval_mode, task=task)
 		else:
 			a = self.model.pi(z, task)[int(not eval_mode)][0]
-		return a.cpu()
+		return a.cpu(), h
 
 	@torch.no_grad()
-	def _estimate_value(self, z, actions, task):
+	def _estimate_value(self, z, h, actions, task):
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		for t in range(self.cfg.horizon):
 			reward = math.two_hot_inv(self.model.reward(z, actions[t], task), self.cfg)
-			z = self.model.next(z, actions[t], task)
+			z, h = self.model.next(z, actions[t], task, h)
 			G += discount * reward
 			discount *= self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 		return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
 
 	@torch.no_grad()
-	def plan(self, z, t0=False, eval_mode=False, task=None):
+	def plan(self, z, t0=False, h=None, eval_mode=False, task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 		
@@ -117,16 +117,20 @@ class TDMPC2:
 			torch.Tensor: Action to take in the environment.
 		"""		
 		# Sample policy trajectories
+		_h = h
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_z = z.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(_z, task)[1]
-				_z = self.model.next(_z, pi_actions[t], task)
+				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
 			pi_actions[-1] = self.model.pi(_z, task)[1]
 
 		# Initialize state and parameters
+		z_orig = z
+		h_orig = h
 		z = z.repeat(self.cfg.num_samples, 1)
+		h = h.repeat(self.cfg.num_samples, 1) if h is not None else None
 		mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
 		std = self.cfg.max_std*torch.ones(self.cfg.horizon, self.cfg.action_dim, device=self.device)
 		if not t0:
@@ -146,7 +150,7 @@ class TDMPC2:
 				actions = actions * self.model._action_masks[task]
 
 			# Compute elite actions
-			value = self._estimate_value(z, actions, task).nan_to_num_(0)
+			value = self._estimate_value(z, h, actions, task).nan_to_num_(0)
 			elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
 			elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
@@ -168,7 +172,9 @@ class TDMPC2:
 		a, std = actions[0], std[0]
 		if not eval_mode:
 			a += std * torch.randn(self.cfg.action_dim, device=std.device)
-		return a.clamp_(-1, 1)
+		# _a = a.repeat(self.cfg.num_samples, 1)
+		_, h = self.model.next(z_orig, a.unsqueeze(0), task, h)
+		return a.clamp_(-1, 1), h
 		
 	def update_pi(self, zs, task):
 		"""
@@ -225,7 +231,7 @@ class TDMPC2:
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, task = buffer.sample()
+		obs, action, reward, hidden, task = buffer.sample()
 	
 		# Compute targets
 		with torch.no_grad():
@@ -238,16 +244,21 @@ class TDMPC2:
 
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
+		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
+		h = hidden[0].detach()
+		hs[0] = h
 		consistency_loss = 0
 		for t in range(self.cfg.horizon):
-			z = self.model.next(z, action[t], task)
+			z, h = self.model.next(z, action[t], task, h)
 			consistency_loss += F.mse_loss(z, next_z[t]) * self.cfg.rho**t
 			zs[t+1] = z
+			hs[t+1] = h
 
 		# Predictions
 		_zs = zs[:-1]
+		_hs = hs[:-1]
 		qs = self.model.Q(_zs, action, task, return_type='all')
 		reward_preds = self.model.reward(_zs, action, task)
 		

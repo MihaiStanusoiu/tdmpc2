@@ -1,0 +1,3 @@
+[submodule "tdmpc2/ncps"]
+	path = tdmpc2/ncps
+	url = git@github.com:MihaiStanusoiu/ncps.git
