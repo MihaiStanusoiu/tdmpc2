@@ -23,7 +23,8 @@ class TDMPC2:
 			{'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
-			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []}
+			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
+			{'params': self.model.initial_h}
 		], lr=self.cfg.lr)
 		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5)
 		self.model.eval()
