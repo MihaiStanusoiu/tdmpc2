@@ -47,7 +47,7 @@ class OnlineTrainer(Trainer):
 			episode_success=np.nanmean(ep_successes),
 		)
 
-	def to_td(self, obs, action=None, reward=None, h=None):
+	def to_td(self, obs, action=None, reward=None, h=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -58,19 +58,20 @@ class OnlineTrainer(Trainer):
 		if reward is None:
 			reward = torch.tensor(float('nan'))
 		if h is None:
-			h = torch.tanh(self.agent.model.initial_h).detach().unsqueeze(0)
+			h = self.agent.initial_h.detach()
 		td = TensorDict(dict(
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			h=h,
+			is_first=torch.ones((1, 1), dtype=torch.bool) if is_first else torch.zeros((1, 1), dtype=torch.bool),
 		), batch_size=(1,))
 		return td
 
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done, eval_next = {}, True, True
-		h = None
+		h = self.agent.initial_h.detach()
 		while self._step <= self.cfg.steps:
 
 			# Evaluate agent periodically
@@ -95,8 +96,9 @@ class OnlineTrainer(Trainer):
 					self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
-				h = None
-				self._tds = [self.to_td(obs)]
+				is_first = True
+				h = self.agent.initial_h.detach()
+				self._tds = [self.to_td(obs, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps:
@@ -104,7 +106,7 @@ class OnlineTrainer(Trainer):
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, h))
+			self._tds.append(self.to_td(obs, action, reward, h, is_first=False))
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:

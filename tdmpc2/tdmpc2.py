@@ -68,6 +68,10 @@ class TDMPC2:
 		state_dict = fp if isinstance(fp, dict) else torch.load(fp)
 		self.model.load_state_dict(state_dict["model"])
 
+	@property
+	def initial_h(self):
+		return torch.tanh(self.model.initial_h).unsqueeze(0)
+
 	@torch.no_grad()
 	def act(self, obs, t0=False, h=None, eval_mode=False, task=None):
 		"""
@@ -121,9 +125,8 @@ class TDMPC2:
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_z = z.repeat(self.cfg.num_pi_trajs, 1)
-			_h = h
-			if h is not None:
-				_h = h.repeat(self.cfg.num_pi_trajs, 1)
+			_h = self.initial_h.detach()
+			_h = _h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(_z, task)[1]
 				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
@@ -224,6 +227,11 @@ class TDMPC2:
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
 		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
 
+	@staticmethod
+	def _mask(value, mask):
+		# Apply element-wise multiplication with broadcasting in PyTorch
+		return value * mask.to(value.dtype)
+
 	def update(self, buffer):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
@@ -234,7 +242,7 @@ class TDMPC2:
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, hidden, task = buffer.sample()
+		obs, action, reward, hidden, is_first, task = buffer.sample()
 	
 		# Compute targets
 		with torch.no_grad():
@@ -250,11 +258,15 @@ class TDMPC2:
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
-		h = hidden[0].detach()
+		h = self.initial_h
 		hs[0] = h
 		consistency_loss = 0
 		for t in range(self.cfg.horizon):
-			z, h = self.model.next(z, action[t], task, h)
+			# mask h with initial_h if obs is_first
+			ht = self._mask(hs[t], 1.0 - is_first[t].float())
+			ht = ht + self._mask(self.initial_h, is_first[t].float())
+
+			z, h = self.model.next(z, action[t], task, ht)
 			consistency_loss += F.mse_loss(z, next_z[t]) * self.cfg.rho**t
 			zs[t+1] = z
 			hs[t+1] = h

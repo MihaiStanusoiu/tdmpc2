@@ -79,8 +79,9 @@ class Buffer():
 		action = td['action'][1:]
 		reward = td['reward'][1:].unsqueeze(-1)
 		h = td['h']
+		is_first = td['is_first']
 		task = td['task'][0] if 'task' in td.keys() else None
-		return self._to_device(obs, action, reward, h, task)
+		return self._to_device(obs, action, reward, h, is_first, task)
 
 	def add(self, td):
 		"""Add an episode to the buffer."""
