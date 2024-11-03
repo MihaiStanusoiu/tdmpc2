@@ -20,11 +20,11 @@ class TDMPC2:
 		self.model = WorldModel(cfg).to(self.device)
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
-			{'params': self.model._dynamics.parameters()},
+			{'params': self.model._rnn.parameters()},
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
-			{'params': self.model.initial_h}
+			# {'params': self.model.initial_h}
 		], lr=self.cfg.lr)
 		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5)
 		self.model.eval()
@@ -70,7 +70,8 @@ class TDMPC2:
 
 	@property
 	def initial_h(self):
-		return torch.tanh(self.model.initial_h).unsqueeze(0)
+		# return torch.tanh(self.model.initial_h).unsqueeze(0)
+		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
 	@torch.no_grad()
 	def act(self, obs, t0=False, h=None, eval_mode=False, task=None):
@@ -91,10 +92,10 @@ class TDMPC2:
 			task = torch.tensor([task], device=self.device)
 		z = self.model.encode(obs, task)
 		if self.cfg.mpc:
-			a, h = self.plan(z, t0=t0, h=h, eval_mode=eval_mode, task=task)
+			a = self.plan(z, t0=t0, h=h, eval_mode=eval_mode, task=task)
 		else:
 			a = self.model.pi(z, task)[int(not eval_mode)][0]
-		return a.cpu(), h
+		return a.cpu()
 
 	@torch.no_grad()
 	def _estimate_value(self, z, h, actions, task):
@@ -125,8 +126,9 @@ class TDMPC2:
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_z = z.repeat(self.cfg.num_pi_trajs, 1)
-			_h = self.initial_h.detach()
-			_h = _h.repeat(self.cfg.num_pi_trajs, 1)
+			if h is None:
+				h = self.initial_h.detach()
+			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(_z, task)[1]
 				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
@@ -179,8 +181,7 @@ class TDMPC2:
 		if not eval_mode:
 			a += std * torch.randn(self.cfg.action_dim, device=std.device)
 		# _a = a.repeat(self.cfg.num_samples, 1)
-		_, h = self.model.next(z_orig, a.unsqueeze(0), task, h_orig)
-		return a.clamp_(-1, 1), h
+		return a.clamp_(-1, 1)
 		
 	def update_pi(self, zs, task):
 		"""
@@ -242,12 +243,12 @@ class TDMPC2:
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, hidden, is_first, task = buffer.sample()
+		obs, action, reward, hidden, next_hidden, is_first, task = buffer.sample()
 	
 		# Compute targets
 		with torch.no_grad():
-			next_z = self.model.encode(obs[1:], task)
-			td_targets = self._td_target(next_z, reward, task)
+			next_z = self.model.encode(obs[self.cfg.burn_in+1:], task)
+			td_targets = self._td_target(next_z, reward[self.cfg.burn_in:], task)
 
 		# Prepare for update
 		self.optim.zero_grad(set_to_none=True)
@@ -256,17 +257,29 @@ class TDMPC2:
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
-		z = self.model.encode(obs[0], task)
+		# z = self.model.encode(obs[0], task)
+		# h = self.initial_h
+
+		with torch.no_grad():
+			z = self.model.encode(obs[0], task)
+			#h = hidden[0]
+			h = self.initial_h
+			for t in range(self.cfg.burn_in):
+				h = self._mask(h, 1.0 - is_first[t].float())
+				h = h + self._mask(self.initial_h, is_first[t].float())
+				_, h = self.model.next(z, action[t], task, h)
+				z = self.model.encode(obs[t+1], task)
+		z = self.model.encode(obs[self.cfg.burn_in], task)
+		h = h.requires_grad_(True)
 		zs[0] = z
-		h = self.initial_h
 		hs[0] = h
 		consistency_loss = 0
 		for t in range(self.cfg.horizon):
 			# mask h with initial_h if obs is_first
-			ht = self._mask(hs[t], 1.0 - is_first[t].float())
-			ht = ht + self._mask(self.initial_h, is_first[t].float())
+			ht = self._mask(hs[t], 1.0 - is_first[t+self.cfg.burn_in].float())
+			ht = ht + self._mask(self.initial_h, is_first[t+self.cfg.burn_in].float())
 
-			z, h = self.model.next(z, action[t], task, ht)
+			z, h = self.model.next(z, action[t+self.cfg.burn_in], task, ht)
 			consistency_loss += F.mse_loss(z, next_z[t]) * self.cfg.rho**t
 			zs[t+1] = z
 			hs[t+1] = h
@@ -274,13 +287,13 @@ class TDMPC2:
 		# Predictions
 		_zs = zs[:-1]
 		_hs = hs[:-1]
-		qs = self.model.Q(_zs, action, task, return_type='all')
-		reward_preds = self.model.reward(_zs, action, task)
+		qs = self.model.Q(_zs, action[self.cfg.burn_in:], task, return_type='all')
+		reward_preds = self.model.reward(_zs, action[self.cfg.burn_in:], task)
 		
 		# Compute losses
 		reward_loss, value_loss = 0, 0
 		for t in range(self.cfg.horizon):
-			reward_loss += math.soft_ce(reward_preds[t], reward[t], self.cfg).mean() * self.cfg.rho**t
+			reward_loss += math.soft_ce(reward_preds[t], reward[t+self.cfg.burn_in], self.cfg).mean() * self.cfg.rho**t
 			for q in range(self.cfg.num_q):
 				value_loss += math.soft_ce(qs[q][t], td_targets[t], self.cfg).mean() * self.cfg.rho**t
 		consistency_loss *= (1/self.cfg.horizon)

@@ -73,7 +73,7 @@ def evaluate(cfg: dict):
 			task_idx = None
 		ep_rewards, ep_successes = [], []
 		for i in range(cfg.eval_episodes):
-			obs, done, ep_reward, t, hidden = env.reset(task_idx=task_idx), False, 0, 0, None
+			obs, done, ep_reward, t, hidden = env.reset(task_idx=task_idx), False, 0, 0, agent.initial_h.detach()
 			if cfg.save_video:
 				frames = [env.render()]
 			while not done:

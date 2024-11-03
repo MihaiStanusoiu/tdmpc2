@@ -21,7 +21,7 @@ class Buffer():
 			truncated_key=None,
 			strict_length=True,
 		)
-		self._batch_size = cfg.batch_size * (cfg.horizon+1)
+		self._batch_size = cfg.batch_size * (cfg.horizon+cfg.burn_in+1)
 		self._num_eps = 0
 
 	@property
@@ -79,9 +79,10 @@ class Buffer():
 		action = td['action'][1:]
 		reward = td['reward'][1:].unsqueeze(-1)
 		h = td['h']
+		next_h = td['next_h']
 		is_first = td['is_first']
 		task = td['task'][0] if 'task' in td.keys() else None
-		return self._to_device(obs, action, reward, h, is_first, task)
+		return self._to_device(obs, action, reward, h, next_h, is_first, task)
 
 	def add(self, td):
 		"""Add an episode to the buffer."""
@@ -94,5 +95,5 @@ class Buffer():
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
-		td = self._buffer.sample().view(-1, self.cfg.horizon+1).permute(1, 0)
+		td = self._buffer.sample().view(-1, self.cfg.horizon+self.cfg.burn_in+1).permute(1, 0)
 		return self._prepare_batch(td)

@@ -28,11 +28,13 @@ class OnlineTrainer(Trainer):
 		"""Evaluate a TD-MPC2 agent."""
 		ep_rewards, ep_successes = [], []
 		for i in range(self.cfg.eval_episodes):
-			obs, done, ep_reward, t, hidden = self.env.reset(), False, 0, 0, None
+			obs, done, ep_reward, t, hidden = self.env.reset(), False, 0, 0, self.agent.initial_h.detach()
 			if self.cfg.save_video:
 				self.logger.video.init(self.env, enabled=(i==0))
 			while not done:
-				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
+				action = self.agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
+				with torch.no_grad():
+					_, hidden = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=hidden)
 				obs, reward, done, info = self.env.step(action)
 				ep_reward += reward
 				t += 1
@@ -47,7 +49,7 @@ class OnlineTrainer(Trainer):
 			episode_success=np.nanmean(ep_successes),
 		)
 
-	def to_td(self, obs, action=None, reward=None, h=None, is_first=False):
+	def to_td(self, obs, action=None, reward=None, h=None, next_h=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -59,11 +61,14 @@ class OnlineTrainer(Trainer):
 			reward = torch.tensor(float('nan'))
 		if h is None:
 			h = self.agent.initial_h.detach()
+		if next_h is None:
+			next_h = self.agent.initial_h.detach()
 		td = TensorDict(dict(
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			h=h,
+			next_h=next_h,
 			is_first=torch.ones((1, 1), dtype=torch.bool) if is_first else torch.zeros((1, 1), dtype=torch.bool),
 		), batch_size=(1,))
 		return td
@@ -102,11 +107,14 @@ class OnlineTrainer(Trainer):
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps:
-				action, h = self.agent.act(obs, t0=len(self._tds)==1, h=h)
+				action = self.agent.act(obs, t0=len(self._tds)==1, h=h)
 			else:
 				action = self.env.rand_act()
+			with torch.no_grad():
+				_, h_next = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=h)
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, h, is_first=False))
+			self._tds.append(self.to_td(obs, action, reward, h, h_next, is_first=False))
+			h = h_next
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:

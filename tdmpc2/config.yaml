@@ -19,8 +19,9 @@ value_coef: 0.1
 consistency_coef: 20
 rho: 0.5
 lr: 3e-4
+burn_in: 6
 enc_lr_scale: 0.3
-grad_clip_norm: 20
+grad_clip_norm: 1000
 tau: 0.01
 discount_denom: 5
 discount_min: 0.95
