@@ -33,10 +33,15 @@ data_dir: ???
 # planning
 mpc: true
 iterations: 6
-num_samples: 512
-num_elites: 64
-num_pi_trajs: 24
-horizon: 10
+#num_samples: 512
+#num_elites: 64
+#num_pi_trajs: 24
+#horizon: 10
+# TODO: use config for these
+num_samples: 128
+num_elites: 16
+num_pi_trajs: 12
+horizon: 16
 min_std: 0.05
 max_std: 2
 temperature: 0.5
