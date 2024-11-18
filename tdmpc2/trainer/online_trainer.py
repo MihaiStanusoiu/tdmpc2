@@ -127,7 +127,7 @@ class OnlineTrainer(Trainer):
 				for _ in range(num_updates):
 					_train_metrics = self.agent.update(self.buffer)
 				train_metrics.update(_train_metrics)
-
+				self.logger.log(train_metrics, 'train')
 			self._step += 1
 	
 		self.logger.finish(self.agent)

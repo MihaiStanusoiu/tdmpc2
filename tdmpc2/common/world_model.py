@@ -24,7 +24,7 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim, return_sequences=False)
-		self._dynamics = layers.mlp(cfg.hidden_dim, 2 * [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+		self._dynamics = layers.mlp(cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self.initial_h = nn.Parameter(torch.zeros(cfg.hidden_dim))
 		self._rnn.batch_first = False
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
