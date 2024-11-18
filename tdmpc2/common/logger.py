@@ -1,6 +1,8 @@
+import dataclasses
 import os
 import datetime
 import re
+
 import numpy as np
 import pandas as pd
 from termcolor import colored
@@ -131,7 +133,7 @@ class Logger:
         print_run(cfg)
         self.project = cfg.get("wandb_project", "none")
         self.entity = cfg.get("wandb_entity", "none")
-        if cfg.disable_wandb or self.project == "none" or self.entity == "none":
+        if not cfg.enable_wandb or self.project == "none" or self.entity == "none":
             print(colored("Wandb disabled.", "blue", attrs=["bold"]))
             cfg.save_agent = False
             cfg.save_video = False
@@ -141,27 +143,26 @@ class Logger:
             os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"
             import wandb
 
-            wandb.init(
-                project=self.project,
-                entity=self.entity,
-                name=str(cfg.seed),
-                group=self._group,
-                tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
-                dir=self._log_dir,
-                config=OmegaConf.to_container(cfg, resolve=True),
-            )
-            print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-            self._wandb = wandb
-            self._video = (
-                VideoRecorder(cfg, self._wandb)
-                if self._wandb and cfg.save_video
-                else None
-            )
-        if self._use_tensorboard:
-            self._tensorboard_logger = TensorBoardLogger(cfg)
-        else:
-            self._tensorboard_logger = None
-
+		wandb.init(
+			project=self.project,
+			entity=self.entity,
+			name=str(cfg.seed),
+			group=self._group,
+			tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
+			dir=self._log_dir,
+			config=dataclasses.asdict(cfg),
+		)
+		print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
+		self._wandb = wandb
+		self._video = (
+			VideoRecorder(cfg, self._wandb)
+			if self._wandb and cfg.save_video
+			else None
+		)
+    if self._use_tensorboard:
+        self._tensorboard_logger = TensorBoardLogger(cfg)
+    else:
+        self._tensorboard_logger = None
     @property
     def video(self):
         return self._video
