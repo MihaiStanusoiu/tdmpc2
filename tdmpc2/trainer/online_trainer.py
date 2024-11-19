@@ -67,6 +67,7 @@ class OnlineTrainer(Trainer):
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done, eval_next = {}, True, False
+		success_count = 0
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
@@ -82,9 +83,12 @@ class OnlineTrainer(Trainer):
 					eval_next = False
 
 				if self._step > 0:
+					if info['success']:
+						success_count += 1
 					train_metrics.update(
 						episode_reward=torch.tensor([td['reward'] for td in self._tds[1:]]).sum(),
 						episode_success=info['success'],
+						success_rate=success_count / (self._ep_idx + 1) * 100,
 					)
 					train_metrics.update(self.common_metrics())
 					self.logger.log(train_metrics, 'train')

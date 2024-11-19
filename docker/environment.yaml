@@ -41,7 +41,7 @@ dependencies:
     ####################
     # Gym:
     # (unmaintained but required for maniskill2/meta-world)
-    # - gym==0.21.0
+    - gym==0.21.0
     ####################
     # ManiSkill2:
     # (requires gym==0.21.0 which occasionally breaks)
@@ -49,7 +49,7 @@ dependencies:
     ####################
     # Meta-World:
     # (requires gym==0.21.0 which occasionally breaks)
-    # - git+https://github.com/Farama-Foundation/Metaworld.git@04be337a12305e393c0caf0cbf5ec7755c7c8feb
+    - git+https://github.com/Farama-Foundation/Metaworld.git@04be337a12305e393c0caf0cbf5ec7755c7c8feb
     ####################
     # MyoSuite:
     # - myosuite

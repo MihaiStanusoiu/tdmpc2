@@ -142,8 +142,8 @@ class Logger:
         else:
             os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"
             import wandb
-
-		wandb.init(
+        wandb.login(key="0b961bb8b95bbca48519a84eeca715dc4187268f")
+        wandb.init(
 			project=self.project,
 			entity=self.entity,
 			name=str(cfg.seed),
@@ -152,17 +152,20 @@ class Logger:
 			dir=self._log_dir,
 			config=dataclasses.asdict(cfg),
 		)
-		print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-		self._wandb = wandb
-		self._video = (
+
+        print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
+        self._wandb = wandb
+        self._video = (
 			VideoRecorder(cfg, self._wandb)
 			if self._wandb and cfg.save_video
 			else None
 		)
-    if self._use_tensorboard:
-        self._tensorboard_logger = TensorBoardLogger(cfg)
-    else:
-        self._tensorboard_logger = None
+
+        if self._use_tensorboard:
+            self._tensorboard_logger = TensorBoardLogger(cfg)
+        else:
+            self._tensorboard_logger = None
+            
     @property
     def video(self):
         return self._video
