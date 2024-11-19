@@ -92,6 +92,9 @@ class OnlineTrainer(Trainer):
 					)
 					train_metrics.update(self.common_metrics())
 					self.logger.log(train_metrics, 'train')
+					train_metrics.pop("episode_reward")
+					train_metrics.pop("episode_success")
+					train_metrics.pop("success_rate")
 					self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
@@ -115,7 +118,10 @@ class OnlineTrainer(Trainer):
 				for _ in range(num_updates):
 					_train_metrics = self.agent.update(self.buffer)
 				train_metrics.update(_train_metrics)
-
+				train_metrics.update(
+					step=self._step
+				)
+				self.logger.log(train_metrics, 'train')
 			self._step += 1
 
 		self.logger.finish(self.agent)
