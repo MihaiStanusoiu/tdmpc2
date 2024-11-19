@@ -16,7 +16,7 @@ class MetaWorldWrapper(gym.Wrapper):
 		self.env.action_repeat = cfg.action_repeat if hasattr(cfg, 'action_repeat') else 2
 
 	def reset(self, **kwargs):
-		obs, _ = super().reset(**kwargs)
+		obs = super().reset(**kwargs)
 		obs = obs.astype(np.float32)
 		self.env.step(np.zeros(self.env.action_space.shape))
 		return obs
@@ -24,7 +24,7 @@ class MetaWorldWrapper(gym.Wrapper):
 	def step(self, action):
 		reward = 0
 		for _ in range(self.env.action_repeat):
-			obs, r, _, _, info = self.env.step(action.copy())
+			obs, r, _, info = self.env.step(action.copy())
 			reward += r
 		obs = obs.astype(np.float32)
 		return obs, reward, False, info

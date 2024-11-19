@@ -38,6 +38,7 @@ class TDMPC2(torch.nn.Module):
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
 			self._update = torch.compile(self._update, mode="reduce-overhead")
+			# self._burn_in_rollout = torch.compile(self._burn_in_rollout, mode="reduce-overhead")
 
 	@property
 	def plan(self):
@@ -245,7 +246,36 @@ class TDMPC2(torch.nn.Module):
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
 		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
 
+	@staticmethod
+	def _mask(value, mask):
+		# Apply element-wise multiplication with broadcasting in PyTorch
+		return value * mask.to(value.dtype)
 
+	def _burn_in_rollout(self, obs_t0, obs, action, hidden, is_first, task=None):
+		"""
+		Perform a burn-in rollout to initialize hidden states.
+
+		Args:
+			obs (torch.Tensor): Observation from the environment.
+			action (torch.Tensor): Action taken in the environment.
+			hidden (torch.Tensor): Hidden state of the RNN.
+			is_first (torch.Tensor): Whether the observation is the first in the episode.
+			task (torch.Tensor): Task index (only used for multi-task experiments).
+
+		Returns:
+			torch.Tensor: Hidden state after the burn-in rollout.
+		"""
+		with torch.no_grad():
+			z = self.model.encode(obs_t0, task)
+			# h = hidden[0]
+			h = self.initial_h
+			for t, (_obs, _action, _is_first) in enumerate(zip(obs.unbind(0), action.unbind(0), is_first.unbind(0))):
+				h = self._mask(h, 1.0 - _is_first.float())
+				h = h + self._mask(self.initial_h, _is_first.float())
+				_, h = self.model.next(z, _action, task, h)
+				z = self.model.encode(_obs, task)
+
+		return h
 
 	def _update(self, obs, action, reward, hidden, is_first, task=None):
 		"""
@@ -261,8 +291,8 @@ class TDMPC2(torch.nn.Module):
 	
 		# Compute targets
 		with torch.no_grad():
-			next_z = self.model.encode(obs[self.cfg.burn_in+1:], task)
-			td_targets = self._td_target(next_z, reward[self.cfg.burn_in:], task)
+			next_z = self.model.encode(obs[1:], task)
+			td_targets = self._td_target(next_z, reward, task)
 
 		# Prepare for update
 		self.model.train()
@@ -270,20 +300,10 @@ class TDMPC2(torch.nn.Module):
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
-		z = self.model.encode(obs[0], task)
 
-		with torch.no_grad():
-			z = self.model.encode(obs[0], task)
-			#h = hidden[0]
-			h = self.initial_h
-			for t in range(self.cfg.burn_in):
-				h = self._mask(h, 1.0 - is_first[t].float())
-				h = h + self._mask(self.initial_h, is_first[t].float())
-				_, h = self.model.next(z, action[t], task, h)
-				z = self.model.encode(obs[t+1], task)
 		z = self.model.encode(obs[self.cfg.burn_in], task)
 		zs[0] = z
-		hs[0] = h
+		hs[0] = hidden
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
@@ -350,11 +370,11 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, task = buffer.sample()
+		obs, action, reward, hidden, hidden_next, is_first, task = buffer.sample()
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
-		return self._update(obs, action, reward, **kwargs)
+		h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
+		return self._update(obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward[self.cfg.burn_in:], h, is_first[self.cfg.burn_in:], **kwargs)
 
-	#TODO: add burn-in rollout

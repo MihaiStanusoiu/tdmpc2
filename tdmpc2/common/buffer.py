@@ -74,9 +74,9 @@ class Buffer():
 		obs = td.get('obs').contiguous()
 		action = td.get('action')[1:].contiguous()
 		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
-		h = td['h'].contiguous(),
-		next_h = td['next_h'].contiguous(),
-		is_first = td['is_first'].contiguous(),
+		h = td['h'].contiguous()
+		next_h = td['next_h'].contiguous()
+		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
