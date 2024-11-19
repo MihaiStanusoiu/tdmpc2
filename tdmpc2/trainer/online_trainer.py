@@ -3,7 +3,6 @@ from time import time
 import numpy as np
 import torch
 from tensordict.tensordict import TensorDict
-
 from trainer.base import Trainer
 
 
@@ -32,6 +31,7 @@ class OnlineTrainer(Trainer):
 			if self.cfg.save_video:
 				self.logger.video.init(self.env, enabled=(i==0))
 			while not done:
+				torch.compiler.cudagraph_mark_step_begin()
 				action = self.agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
 				with torch.no_grad():
 					_, hidden = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=hidden)
@@ -63,22 +63,22 @@ class OnlineTrainer(Trainer):
 			h = self.agent.initial_h.detach()
 		if next_h is None:
 			next_h = self.agent.initial_h.detach()
-		td = TensorDict(dict(
+		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			h=h,
 			next_h=next_h,
 			is_first=torch.ones((1, 1), dtype=torch.bool) if is_first else torch.zeros((1, 1), dtype=torch.bool),
-		), batch_size=(1,))
+		batch_size=(1,))
 		return td
 
 	def train(self):
 		"""Train a TD-MPC2 agent."""
-		train_metrics, done, eval_next = {}, True, True
+		train_metrics, done, eval_next = {}, True, False
+		success_count = 0
 		h = self.agent.initial_h.detach()
 		while self._step <= self.cfg.steps:
-
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
 				eval_next = True
@@ -93,9 +93,12 @@ class OnlineTrainer(Trainer):
 					eval_next = False
 
 				if self._step > 0:
+					if info['success']:
+						success_count += 1
 					train_metrics.update(
 						episode_reward=torch.tensor([td['reward'] for td in self._tds[1:]]).sum(),
 						episode_success=info['success'],
+						success_rate=success_count / (self._ep_idx + 1) * 100,
 					)
 					train_metrics.update(self.common_metrics())
 					self.logger.log(train_metrics, 'train')
@@ -129,5 +132,5 @@ class OnlineTrainer(Trainer):
 				train_metrics.update(_train_metrics)
 
 			self._step += 1
-	
+
 		self.logger.finish(self.agent)

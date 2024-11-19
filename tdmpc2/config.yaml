@@ -70,10 +70,10 @@ dropout: 0.01
 simnorm_dim: 8
 
 # logging
-wandb_project: ???
-wandb_entity: ???
+wandb_project: ltc-tdmpc2
+wandb_entity: mihaistanusoiu-tu-wien
 wandb_silent: false
-disable_wandb: true
+enable_wandb: true
 save_csv: true
 
 # misc
@@ -94,3 +94,6 @@ action_dims: ???
 episode_lengths: ???
 seed_steps: 10
 bin_size: ???
+
+# speedups
+compile: False
