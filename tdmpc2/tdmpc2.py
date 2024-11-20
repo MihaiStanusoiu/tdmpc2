@@ -38,7 +38,7 @@ class TDMPC2(torch.nn.Module):
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
 			self._update = torch.compile(self._update, mode="reduce-overhead")
-			# self._burn_in_rollout = torch.compile(self._burn_in_rollout, mode="reduce-overhead")
+			self._burn_in_rollout = torch.compile(self._burn_in_rollout, mode="reduce-overhead")
 
 	@property
 	def plan(self):
@@ -271,7 +271,7 @@ class TDMPC2(torch.nn.Module):
 			h = self.initial_h
 			for t, (_obs, _action, _is_first) in enumerate(zip(obs.unbind(0), action.unbind(0), is_first.unbind(0))):
 				h = self._mask(h, 1.0 - _is_first.float())
-				h = h + self._mask(self.initial_h, _is_first.float())
+				h = h + self._mask(self.initial_h.detach(), _is_first.float())
 				_, h = self.model.next(z, _action, task, h)
 				z = self.model.encode(_obs, task)
 
@@ -301,13 +301,13 @@ class TDMPC2(torch.nn.Module):
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 
-		z = self.model.encode(obs[self.cfg.burn_in], task)
+		z = self.model.encode(obs[0], task)
 		zs[0] = z
-		hs[0] = hidden
+		hs[0] = hidden.detach()
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
-			ht = ht + self._mask(self.initial_h, _is_first.float())
+			ht = ht + self._mask(self.initial_h.detach(), _is_first.float())
 			z, h = self.model.next(z, _action, task, ht)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z

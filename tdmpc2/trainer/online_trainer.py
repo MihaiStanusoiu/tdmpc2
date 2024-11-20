@@ -26,6 +26,7 @@ class OnlineTrainer(Trainer):
 	def eval(self):
 		"""Evaluate a TD-MPC2 agent."""
 		ep_rewards, ep_successes = [], []
+		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, hidden = self.env.reset(), False, 0, 0, self.agent.initial_h.detach()
 			if self.cfg.save_video:
@@ -42,8 +43,14 @@ class OnlineTrainer(Trainer):
 					self.logger.video.record(self.env)
 			ep_rewards.append(ep_reward)
 			ep_successes.append(info['success'])
-			if self.cfg.save_video:
+			if self.cfg.save_video and not video_saved and info['success']:
 				self.logger.video.save(self._step)
+				video_saved = True
+
+		if self.cfg.save_video and not video_saved:
+			self.logger.video.save(self._step)
+
+		self.logger.video.close()
 		return dict(
 			episode_reward=np.nanmean(ep_rewards),
 			episode_success=np.nanmean(ep_successes),
@@ -77,6 +84,7 @@ class OnlineTrainer(Trainer):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done, eval_next = {}, True, False
 		success_count = 0
+		reset_success_count = False
 		h = self.agent.initial_h.detach()
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
@@ -91,6 +99,7 @@ class OnlineTrainer(Trainer):
 					self.logger.log(eval_metrics, 'eval')
 					self.logger.save_agent(self.agent, identifier=f'{self._step}')
 					eval_next = False
+					reset_success_count = True
 
 				if self._step > 0:
 					if info['success']:
@@ -98,11 +107,17 @@ class OnlineTrainer(Trainer):
 					train_metrics.update(
 						episode_reward=torch.tensor([td['reward'] for td in self._tds[1:]]).sum(),
 						episode_success=info['success'],
-						success_rate=success_count / (self._ep_idx + 1) * 100,
+						success_rate=success_count / (self.cfg.eval_freq // self.env.max_episode_steps),
 					)
 					train_metrics.update(self.common_metrics())
 					self.logger.log(train_metrics, 'train')
-					train_metrics.clear()
+					train_metrics.pop('episode_reward')
+					train_metrics.pop('episode_success')
+					train_metrics.pop('success_rate')
+					if reset_success_count:
+						success_count = 0
+						reset_success_count = False
+
 					self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
