@@ -174,14 +174,26 @@ class Logger:
     def model_dir(self):
         return self._model_dir
 
-    def save_agent(self, agent=None, identifier='final'):
+    def save_agent(self, agent=None, buffer=None, identifier='final'):
         if self._save_agent and agent:
             fp = self._model_dir / f'{str(identifier)}.pt'
             agent.save(fp)
+
             if self._wandb:
                 artifact = self._wandb.Artifact(
                     self._group + '-' + str(self._seed) + '-' + str(identifier),
                     type='model',
+                )
+                artifact.add_file(fp)
+                self._wandb.log_artifact(artifact)
+        if self._save_agent and buffer:
+            bfp = self._model_dir / f'{str(identifier)}.buffer'
+            buffer.dumps(bfp)
+
+            if self._wandb:
+                artifact = self._wandb.Artifact(
+                    self._group + '-' + str(self._seed) + '-' + str(identifier) + '-buffer',
+                    type='dataset',
                 )
                 artifact.add_file(fp)
                 self._wandb.log_artifact(artifact)

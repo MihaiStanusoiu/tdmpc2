@@ -50,7 +50,6 @@ class OnlineTrainer(Trainer):
 		if self.cfg.save_video and not video_saved:
 			self.logger.video.save(self._step)
 
-		self.logger.video.close()
 		return dict(
 			episode_reward=np.nanmean(ep_rewards),
 			episode_success=np.nanmean(ep_successes),

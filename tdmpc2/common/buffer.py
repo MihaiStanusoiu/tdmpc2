@@ -91,6 +91,9 @@ class Buffer():
 		self._num_eps += 1
 		return self._num_eps
 
+	def dumps(self, path):
+		self._buffer.dumps(path)
+
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
 		td = self._buffer.sample().view(-1, self.cfg.horizon+self.cfg.burn_in+1).permute(1, 0)
