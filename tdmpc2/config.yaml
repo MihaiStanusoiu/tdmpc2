@@ -41,7 +41,7 @@ num_pi_trajs: 24
 #num_samples: 64
 #num_elites: 8
 #num_pi_trajs: 6
-horizon: 3
+horizon: 10
 min_std: 0.05
 max_std: 2
 temperature: 0.5

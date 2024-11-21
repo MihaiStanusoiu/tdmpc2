@@ -30,7 +30,8 @@ class OnlineTrainer(Trainer):
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, hidden = self.env.reset(), False, 0, 0, self.agent.initial_h.detach()
 			if self.cfg.save_video:
-				self.logger.video.init(self.env, enabled=(i==0))
+				# self.logger.video.init(self.env, enabled=(i == 0))
+				self.logger.video.init(self.env, enabled=True)
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
 				action = self.agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
@@ -96,7 +97,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics = self.eval()
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
-					self.logger.save_agent(self.agent, identifier=f'{self._step}')
+					self.logger.save_agent(self.agent, self.buffer, identifier=f'{self._step}')
 					eval_next = False
 					reset_success_count = True
 
@@ -106,7 +107,7 @@ class OnlineTrainer(Trainer):
 					train_metrics.update(
 						episode_reward=torch.tensor([td['reward'] for td in self._tds[1:]]).sum(),
 						episode_success=info['success'],
-						success_rate=success_count / (self.cfg.eval_freq // self.env.max_episode_steps),
+						success_rate=success_count / (self.cfg.eval_freq // self.env.max_episode_steps) * 100,
 					)
 					train_metrics.update(self.common_metrics())
 					self.logger.log(train_metrics, 'train')

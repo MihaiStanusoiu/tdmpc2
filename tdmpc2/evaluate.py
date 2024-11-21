@@ -77,7 +77,9 @@ def evaluate(cfg: dict):
 			if cfg.save_video:
 				frames = [env.render()]
 			while not done:
-				action, hidden = agent.act(obs, t0=t==0, task=task_idx, h=hidden)
+				action = agent.act(obs, t0=t==0, task=task_idx, h=hidden)
+				with torch.no_grad():
+					_, hidden = agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=hidden)
 				obs, reward, done, info = env.step(action)
 				ep_reward += reward
 				t += 1
