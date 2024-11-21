@@ -28,7 +28,7 @@ class WorldModel(nn.Module):
 		self._rnn.batch_first = False
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+		self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
 		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
@@ -138,7 +138,7 @@ class WorldModel(nn.Module):
 		z = torch.cat([z, a], dim=-1)
 		return self._reward(z)
 
-	def pi(self, z, task):
+	def pi(self, z, h, task):
 		"""
 		Samples an action from the policy prior.
 		The policy prior is a Gaussian distribution with
@@ -146,6 +146,8 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
+
+		z = torch.cat([z, h], dim=-1)
 
 		# Gaussian policy prior
 		mu, log_std = self._pi(z).chunk(2, dim=-1)

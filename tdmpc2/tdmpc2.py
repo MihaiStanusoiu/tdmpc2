@@ -125,7 +125,7 @@ class TDMPC2(torch.nn.Module):
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
-		return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
+		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], task, return_type='avg')
 
 	@torch.no_grad()
 	def _plan(self, obs, t0=False, h=None,  eval_mode=False, task=None):
@@ -150,9 +150,9 @@ class TDMPC2(torch.nn.Module):
 				h = self.initial_h.detach()
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
-				pi_actions[t] = self.model.pi(_z, task)[1]
+				pi_actions[t] = self.model.pi(_z, _h, task)[1]
 				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
-			pi_actions[-1] = self.model.pi(_z, task)[1]
+			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
 
 		# Initialize state and parameters
 		z_orig = z
@@ -203,7 +203,7 @@ class TDMPC2(torch.nn.Module):
 		self._prev_mean.copy_(mean)
 		return a.clamp(-1, 1)
 
-	def update_pi(self, zs, task):
+	def update_pi(self, zs, hs, task):
 		"""
 		Update policy using a sequence of latent states.
 
@@ -214,7 +214,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			float: Loss of the policy update.
 		"""
-		_, pis, log_pis, _ = self.model.pi(zs, task)
+		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
 		qs = self.model.Q(zs, pis, task, return_type='avg', detach=True)
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
@@ -230,7 +230,7 @@ class TDMPC2(torch.nn.Module):
 		return pi_loss.detach(), pi_grad_norm
 
 	@torch.no_grad()
-	def _td_target(self, next_z, reward, task):
+	def _td_target(self, next_z, hidden, reward, task):
 		"""
 		Compute the TD-target from a reward and the observation at the following time step.
 
@@ -242,7 +242,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: TD-target.
 		"""
-		pi = self.model.pi(next_z, task)[1]
+		pi = self.model.pi(next_z, hidden, task)[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
 		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
 
@@ -277,7 +277,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, obs, action, reward, hidden, is_first, task=None):
+	def _update(self, obs, action, reward, hidden, start_h, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -292,7 +292,7 @@ class TDMPC2(torch.nn.Module):
 		# Compute targets
 		with torch.no_grad():
 			next_z = self.model.encode(obs[1:], task)
-			td_targets = self._td_target(next_z, reward, task)
+			td_targets = self._td_target(next_z,  hidden[1:].detach(), reward, task)
 
 		# Prepare for update
 		self.model.train()
@@ -303,7 +303,7 @@ class TDMPC2(torch.nn.Module):
 
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
-		hs[0] = hidden.detach()
+		hs[0] = start_h.detach()
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
@@ -342,7 +342,7 @@ class TDMPC2(torch.nn.Module):
 		self.optim.zero_grad(set_to_none=True)
 
 		# Update policy
-		pi_loss, pi_grad_norm = self.update_pi(zs.detach(), task)
+		pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs.detach(), task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
@@ -376,5 +376,5 @@ class TDMPC2(torch.nn.Module):
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward[self.cfg.burn_in:], h, is_first[self.cfg.burn_in:], **kwargs)
+		return self._update(obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward[self.cfg.burn_in:], hidden[self.cfg.burn_in:], h, is_first[self.cfg.burn_in:], **kwargs)
 
