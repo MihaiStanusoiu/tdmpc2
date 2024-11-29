@@ -56,7 +56,7 @@ class OnlineTrainer(Trainer):
 			episode_success=np.nanmean(ep_successes),
 		)
 
-	def to_td(self, obs, action=None, reward=None, h=None, next_h=None, is_first=False):
+	def to_td(self, obs, action=None, reward=None, h=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -68,14 +68,11 @@ class OnlineTrainer(Trainer):
 			reward = torch.tensor(float('nan'))
 		if h is None:
 			h = self.agent.initial_h.detach()
-		if next_h is None:
-			next_h = self.agent.initial_h.detach()
 		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			h=h,
-			next_h=next_h,
 			is_first=torch.ones((1, 1), dtype=torch.bool) if is_first else torch.zeros((1, 1), dtype=torch.bool),
 		batch_size=(1,))
 		return td
@@ -84,7 +81,9 @@ class OnlineTrainer(Trainer):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done, eval_next = {}, True, False
 		success_count = 0
+		ep_count = 0
 		reset_success_count = False
+		log_success_rate = False
 		h = self.agent.initial_h.detach()
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
@@ -93,22 +92,26 @@ class OnlineTrainer(Trainer):
 
 			# Reset environment
 			if done:
+				ep_count += 1
 				if eval_next:
 					eval_metrics = self.eval()
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
-					self.logger.save_agent(self.agent, self.buffer if self._ep_idx > 0 else None, identifier=f'{self._step}')
+					self.logger.save_agent(self.agent, None, identifier=f'{self._step}')
 					eval_next = False
 					reset_success_count = True
 
 				if self._step > 0:
+					# if info.has_key('success'):
+					log_success_rate = True
 					if info['success']:
 						success_count += 1
 					train_metrics.update(
 						episode_reward=torch.tensor([td['reward'] for td in self._tds[1:]]).sum(),
 						episode_success=info['success'],
-						success_rate=success_count / (self.cfg.eval_freq // self.env.max_episode_steps) * 100,
 					)
+					if log_success_rate:
+						train_metrics.update(success_rate=success_count / ep_count * 100)
 					train_metrics.update(self.common_metrics())
 					self.logger.log(train_metrics, 'train')
 					train_metrics.pop('episode_reward')
@@ -133,7 +136,7 @@ class OnlineTrainer(Trainer):
 			with torch.no_grad():
 				_, h_next = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=h)
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, h, h_next, is_first=False))
+			self._tds.append(self.to_td(obs, action, reward, h, is_first=False))
 			h = h_next
 
 			# Update agent

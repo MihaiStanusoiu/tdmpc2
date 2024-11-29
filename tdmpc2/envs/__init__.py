@@ -23,6 +23,10 @@ try:
 except Exception as e:
 	make_metaworld_env = missing_dependencies
 try:
+	from envs.robosuite import make_env as make_robosuite_env
+except Exception as e:
+ 	make_robosuite_env = missing_dependencies
+try:
 	from envs.myosuite import make_env as make_myosuite_env
 except:
 	make_myosuite_env = missing_dependencies
@@ -62,7 +66,7 @@ def make_env(cfg):
 
 	else:
 		env = None
-		for fn in [make_dm_control_env, make_maniskill_env, make_metaworld_env, make_myosuite_env]:
+		for fn in [make_dm_control_env, make_maniskill_env, make_metaworld_env, make_robosuite_env, make_myosuite_env]:
 			try:
 				env = fn(cfg)
 			except ValueError:

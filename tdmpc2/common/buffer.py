@@ -75,12 +75,11 @@ class Buffer():
 		action = td.get('action')[1:].contiguous()
 		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
 		h = td['h'].contiguous()
-		next_h = td['next_h'].contiguous()
 		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
-		return obs, action, reward, h, next_h, is_first, task
+		return obs, action, reward, h, is_first, task
 
 	def add(self, td):
 		"""Add an episode to the buffer."""

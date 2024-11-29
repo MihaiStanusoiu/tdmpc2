@@ -370,7 +370,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, hidden, hidden_next, is_first, task = buffer.sample()
+		obs, action, reward, hidden, is_first, task = buffer.sample()
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
