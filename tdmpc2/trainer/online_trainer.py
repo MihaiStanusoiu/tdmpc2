@@ -97,6 +97,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics = self.eval()
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
+					identifier = f'{self._step}' if not self.cfg.override else 'final'
 					self.logger.save_agent(self.agent, None, identifier=f'{self._step}')
 					eval_next = False
 					reset_success_count = True
@@ -129,7 +130,7 @@ class OnlineTrainer(Trainer):
 				self._tds = [self.to_td(obs, is_first=True)]
 
 			# Collect experience
-			if self._step > self.cfg.seed_steps:
+			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
 				action = self.agent.act(obs, t0=len(self._tds)==1, h=h)
 			else:
 				action = self.env.rand_act()

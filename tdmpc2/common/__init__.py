@@ -76,3 +76,5 @@ TASK_SET = {
 		'mw-bin-picking', 'mw-box-close', 'mw-door-lock', 'mw-door-unlock', 'mw-hand-insert',
 	],
 }
+
+import ncps

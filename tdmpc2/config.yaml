@@ -14,6 +14,7 @@ rs_max_episode_steps: 200
 checkpoint: ???
 eval_episodes: 2
 eval_freq: 5000
+2d_plots: false
 use_tensorboard: True
 
 # training
@@ -85,6 +86,8 @@ save_csv: true
 # misc
 save_video: true
 save_agent: true
+save_buffer: true
+override: true
 seed: 1
 
 # convenience
@@ -98,7 +101,7 @@ episode_length: ???
 obs_shapes: ???
 action_dims: ???
 episode_lengths: ???
-seed_steps: 1000
+seed_steps: 100
 bin_size: ???
 
 # speedups

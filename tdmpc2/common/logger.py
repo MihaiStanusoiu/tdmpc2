@@ -126,6 +126,7 @@ class Logger:
         self._model_dir = make_dir(self._log_dir / "models")
         self._save_csv = cfg.save_csv
         self._save_agent = cfg.save_agent
+        self._save_buffer = cfg.save_buffer
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
         self._eval = []
@@ -186,7 +187,7 @@ class Logger:
                 )
                 artifact.add_file(fp)
                 self._wandb.log_artifact(artifact)
-        if self._save_agent and buffer:
+        if self._save_buffer and buffer:
             bfp = self._model_dir / f'{str(identifier)}.buffer'
             buffer.dumps(bfp)
 
@@ -198,9 +199,9 @@ class Logger:
                 artifact.add_file(fp)
                 self._wandb.log_artifact(artifact)
 
-    def finish(self, agent=None):
+    def finish(self, agent=None, buffer=None):
         try:
-            self.save_agent(agent)
+            self.save_agent(agent, buffer)
         except Exception as e:
             print(colored(f"Failed to save model: {e}", "red"))
         if self._wandb:

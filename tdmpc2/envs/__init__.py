@@ -12,7 +12,7 @@ def missing_dependencies(task):
 
 try:
 	from envs.dmcontrol import make_env as make_dm_control_env
-except:
+except Exception as e:
 	make_dm_control_env = missing_dependencies
 try:
 	from envs.maniskill import make_env as make_maniskill_env
