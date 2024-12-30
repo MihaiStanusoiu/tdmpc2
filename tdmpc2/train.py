@@ -21,7 +21,7 @@ from common.logger import Logger
 
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
-
+torch.autograd.set_detect_anomaly(True)
 
 @hydra.main(config_name='config', config_path='.')
 def train(cfg: dict):
@@ -73,4 +73,5 @@ def train(cfg: dict):
 
 
 if __name__ == '__main__':
+	# load config from yaml
 	train()

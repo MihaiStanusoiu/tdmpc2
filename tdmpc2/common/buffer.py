@@ -21,7 +21,7 @@ class Buffer():
 			truncated_key=None,
 			strict_length=True,
 		)
-		self._batch_size = cfg.batch_size * (cfg.horizon+1)
+		self._batch_size = cfg.batch_size * (cfg.horizon+cfg.burn_in+1)
 		self._num_eps = 0
 
 	@property
@@ -70,14 +70,16 @@ class Buffer():
 		Prepare a sampled batch for training (post-processing).
 		Expects `td` to be a TensorDict with batch size TxB.
 		"""
-		td = td.select("obs", "action", "reward", "task", strict=False).to(self._device, non_blocking=True)
+		td = td.select("obs", "action", "reward", "h", "next_h", "is_first", "task", strict=False).to(self._device, non_blocking=True)
 		obs = td.get('obs').contiguous()
 		action = td.get('action')[1:].contiguous()
 		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
+		# h = td['h'].contiguous()
+		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
-		return obs, action, reward, task
+		return obs, action, reward, is_first, task
 
 	def add(self, td):
 		"""Add an episode to the buffer."""
@@ -88,7 +90,10 @@ class Buffer():
 		self._num_eps += 1
 		return self._num_eps
 
+	def dumps(self, path):
+		self._buffer.dumps(path)
+
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
-		td = self._buffer.sample().view(-1, self.cfg.horizon+1).permute(1, 0)
+		td = self._buffer.sample().view(-1, self.cfg.horizon+self.cfg.burn_in+1).permute(1, 0)
 		return self._prepare_batch(td)

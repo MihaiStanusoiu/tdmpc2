@@ -3,8 +3,12 @@ from copy import deepcopy
 import torch
 import torch.nn as nn
 
+from ncps.torch import CfC
 from common import layers, math, init
 from tensordict.nn import TensorDictParams
+
+from common import networks, tools
+
 
 class WorldModel(nn.Module):
 	"""
@@ -20,13 +24,98 @@ class WorldModel(nn.Module):
 			self.register_buffer("_action_masks", torch.zeros(len(cfg.tasks), cfg.action_dim))
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
-		self._encoder = layers.enc(cfg)
-		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+		self._encoder = networks.MultiEncoder(
+			cfg.obs_shape,
+			**cfg.encoder
+		)
+		self._embed_size = self._encoder.outdim
+		self._device = torch.device('cuda:0')
+		self.dynamics = networks.RSSM(
+			cfg.dyn_stoch,
+			cfg.latent_dim,
+			cfg.hidden_dim,
+			1,
+			False,
+			cfg.act,
+			True,
+			cfg.dyn_mean_act,
+			cfg.dyn_std_act,
+			cfg.dyn_min_std,
+			cfg.unimix_ratio,
+			cfg.initial,
+			cfg.action_dim,
+			self._embed_size,
+			self._device
+		)
+		self.heads = nn.ModuleDict()
+		if cfg.dyn_discrete:
+			feat_size = cfg.dyn_stoch * cfg.dyn_discrete + cfg.latent_dim
+		else:
+			feat_size = cfg.dyn_stoch + cfg.dyn_deter
+
+		# self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim, return_sequences=False)
+		# self._dynamics = layers.mlp(cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+		# self.initial_h = nn.Parameter(torch.zeros(cfg.hidden_dim))
+		# self._rnn.batch_first = False
+		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+		self.heads['reward'] = networks.MLP(
+			feat_size,
+			(255,) if cfg.reward_head["dist"] == "symlog_disc" else (),
+			cfg.reward_head["layers"],
+			cfg.mlp_dim,
+			cfg.act,
+			cfg.norm,
+			dist=cfg.reward_head["dist"],
+			outscale=cfg.reward_head["outscale"],
+			device=self._device,
+			name="Reward",
+		)
+		self.heads["is_first"] = networks.MLP(
+			feat_size,
+			(),
+			cfg.is_first_head["layers"],
+			cfg.mlp_dim,
+			cfg.act,
+			cfg.norm,
+			dist="binary",
+			outscale=cfg.is_first_head["outscale"],
+			device=self._device,
+			name="Cont",
+		)
+		self.heads['V'] = layers.Ensemble([networks.MLP(
+			feat_size,
+			(255,) if cfg.V_head["dist"] == "symlog_disc" else (),
+			cfg.V_head["layers"],
+			cfg.mlp_dim,
+			cfg.act,
+			cfg.norm,
+			dist=cfg.V_head["dist"],
+			outscale=cfg.V_head["outscale"],
+			device=self._device,
+			name="V",
+		)])
+		self._pi = networks.MLP(
+            feat_size,
+            (cfg.action_dim,),
+            cfg.actor["layers"],
+            cfg.mlp_dim,
+            cfg.act,
+            cfg.norm,
+            cfg.actor["dist"],
+            cfg.actor["std"],
+            cfg.actor["min_std"],
+            cfg.actor["max_std"],
+            absmax=1.0,
+            temp=cfg.actor["temp"],
+            unimix_ratio=cfg.actor["unimix_ratio"],
+            outscale=cfg.actor["outscale"],
+            name="Actor",
+        )
+		# self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
 		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
-		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
+		# init.zero_([self.heads['reward'].weight, self._Qs.params["2", "weight"]])
+
 
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
@@ -48,8 +137,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._encoder, self._dynamics, self._reward, self._pi, self._Qs]):
+		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'V-functions', 'Is first predictor']
+		for i, m in enumerate([self._encoder, self.dynamics, self.heads['reward'], self._pi, self.heads['V'], self.heads['is_first']]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -103,15 +192,81 @@ class WorldModel(nn.Module):
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
 		return self._encoder[self.cfg.obs](obs)
 
-	def next(self, z, a, task):
+	def imagine(self, start, policy, horizon, eval_mode=False):
+		dynamics = self.dynamics
+		flatten = lambda x: x.reshape([-1] + list(x.shape[2:]))
+		start = {k: flatten(v) for k, v in start.items()}
+
+		def step(prev, _):
+			state, _, _ = prev
+			feat = dynamics.get_feat(state)
+			inp = feat.detach()
+			if eval_mode:
+				action = policy(inp).mode()
+			else:
+				action = policy(inp).sample()
+			succ = dynamics.img_step(state, action)
+			return succ, feat, action
+
+		succ, feats, actions = tools.static_scan(
+			step, [torch.arange(horizon)], (start, None, None)
+		)
+		states = {k: torch.cat([start[k][None], v[:-1]], 0) for k, v in succ.items()}
+
+		return feats, states, actions
+
+	def _policy(self, obs, state, training):
+		if state is None:
+			latent = action = None
+		else:
+			latent, action = state
+		obs = self._wm.preprocess(obs)
+		embed = self._wm.encoder(obs)
+		latent, _ = self._wm.dynamics.obs_step(latent, action, embed, obs["is_first"])
+		if self._config.eval_state_mean:
+			latent["stoch"] = latent["mean"]
+		feat = self._wm.dynamics.get_feat(latent)
+		if not training:
+			actor = self._task_behavior.actor(feat)
+			action = actor.mode()
+		elif self._should_expl(self._step):
+			actor = self._expl_behavior.actor(feat)
+			action = actor.sample()
+		else:
+			actor = self._task_behavior.actor(feat)
+			action = actor.sample()
+		logprob = actor.log_prob(action)
+		latent = {k: v.detach() for k, v in latent.items()}
+		action = action.detach()
+		if self._config.actor["dist"] == "onehot_gumble":
+			action = torch.one_hot(
+				torch.argmax(action, dim=-1), self._config.num_actions
+			)
+		policy_output = {"action": action, "logprob": logprob}
+		state = (latent, action)
+		return policy_output, state
+
+	def next(self, z, a, task, h=None):
 		"""
 		Predicts the next latent state given the current latent state and action.
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 		z = torch.cat([z, a], dim=-1)
-		return self._dynamics(z)
+		if z.dim() != 3:
+			z = z.unsqueeze(0)
+		z_next, h = self._rnn(z, h)
+		#z_next = self._dynamics(h)
+		return z_next, h
 
+	def forward(self, obs, a, task=None, h=None):
+		"""
+		Forward pass through the world model.
+		"""
+		z = self.encode(obs, task)
+		z_next, h = self.next(z, a, task, h)
+		return z_next, h
+	
 	def reward(self, z, a, task):
 		"""
 		Predicts instantaneous (single-step) reward.
@@ -121,7 +276,7 @@ class WorldModel(nn.Module):
 		z = torch.cat([z, a], dim=-1)
 		return self._reward(z)
 
-	def pi(self, z, task):
+	def pi(self, z, h, task):
 		"""
 		Samples an action from the policy prior.
 		The policy prior is a Gaussian distribution with
@@ -129,6 +284,8 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
+
+		z = torch.cat([z, h], dim=-1)
 
 		# Gaussian policy prior
 		mu, log_std = self._pi(z).chunk(2, dim=-1)
@@ -149,7 +306,7 @@ class WorldModel(nn.Module):
 
 		return mu, pi, log_pi, log_std
 
-	def Q(self, z, a, task, return_type='min', target=False, detach=False):
+	def Q(self, z, return_type='min', target=False, detach=False):
 		"""
 		Predict state-action value.
 		`return_type` can be one of [`min`, `avg`, `all`]:
@@ -160,10 +317,6 @@ class WorldModel(nn.Module):
 		"""
 		assert return_type in {'min', 'avg', 'all'}
 
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-
-		z = torch.cat([z, a], dim=-1)
 		if target:
 			qnet = self._target_Qs
 		elif detach:
