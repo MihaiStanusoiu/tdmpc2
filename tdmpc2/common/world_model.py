@@ -35,7 +35,7 @@ class WorldModel(nn.Module):
 			cfg.latent_dim,
 			cfg.hidden_dim,
 			1,
-			False,
+			cfg.dyn_discrete,
 			cfg.act,
 			True,
 			cfg.dyn_mean_act,

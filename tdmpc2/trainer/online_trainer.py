@@ -28,16 +28,17 @@ class OnlineTrainer(Trainer):
 		ep_rewards, ep_successes = [], []
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
-			obs, done, ep_reward, t, state = self.env.reset(), False, 0, 0, self.agent.model.dynamics.initial(self.cfg.batch_size)
+			obs, done, ep_reward, t, state = self.env.reset(), False, 0, 0, self.agent.model.dynamics.initial(1)
+			prev_action = torch.zeros((1, self.env.action_space.shape[0]), dtype=torch.float32)
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
 				self.logger.video.init(self.env, enabled=True)
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
-				action = self.agent.act(obs, state, t0=t==0, eval_mode=True)
+				action = self.agent.act(obs.cuda().unsqueeze(0), state, prev_action, t0=t==0, eval_mode=True)
 				with torch.no_grad():
 					# _, h_next = self.agent.model.next(state['z'], action.cuda().unsqueeze(0), None, state['h'])
-					state, _ = self.agent.model.dynamics.observe(self.agent.model.encoder(obs.cuda().unsqueeze()), action.cuda.unsqueeze(), False, state)
+					state, _ = self.agent.model.dynamics.observe(self.agent.model._encoder(obs.cuda().unsqueeze(0)), action.cuda.unsqueeze(0), False, state)
 					# _, hidden = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=hidden)
 				obs, reward, done, info = self.env.step(action)
 				ep_reward += reward
@@ -83,7 +84,8 @@ class OnlineTrainer(Trainer):
 		ep_count = 0
 		reset_success_count = False
 		log_success_rate = False
-		state = self.agent.model.dynamics.initial(self.cfg.batch_size)
+		state = self.agent.model.dynamics.initial(1)
+		prev_action = torch.zeros((1, self.env.action_space.shape[0]), dtype=torch.float32)
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
@@ -125,17 +127,19 @@ class OnlineTrainer(Trainer):
 
 				obs = self.env.reset()
 				is_first = True
-				state = self.agent.model.dynamics.initial(self.cfg.batch_size)
+				state = self.agent.model.dynamics.initial(1)
+				prev_action = torch.zeros((1, self.env.action_space.shape[0]), dtype=torch.float32)
 				self._tds = [self.to_td(obs, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
-				action = self.agent.act(obs, state, t0=len(self._tds)==1)
+				action = self.agent.act(obs, state, prev_action, t0=len(self._tds)==1)
 			else:
 				action = self.env.rand_act()
+			prev_action = action
 			obs, reward, done, info = self.env.step(action)
 			with torch.no_grad():
-				state, _ = self.agent.model.dynamics.observe(self.agent.model.encoder(obs), action, False, state)
+				state, _ = self.agent.model.dynamics.observe(self.agent.model._encoder(obs), action, False, state)
 				# _, h_next = self.agent.model.next(state['z'], action.cuda().unsqueeze(0), None, state['h'])
 			self._tds.append(self.to_td(obs, action, reward, is_first=False))
 

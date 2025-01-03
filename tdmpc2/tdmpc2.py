@@ -99,7 +99,7 @@ class TDMPC2(torch.nn.Module):
 		return { 'z': z, 'h': h }
 
 	@torch.no_grad()
-	def act(self, obs, state, t0=False, eval_mode=False, task=None):
+	def act(self, obs, state, prev_action, t0=False, eval_mode=False, task=None):
 		"""
 		Select an action by planning in the latent space of the world model.
 
@@ -116,7 +116,7 @@ class TDMPC2(torch.nn.Module):
 		if task is not None:
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
-			a = self.plan(state, t0=t0, eval_mode=eval_mode, task=task)
+			a = self.plan(obs, state, prev_action, t0=t0, eval_mode=eval_mode, task=task)
 		else:
 			_, _, actions = self.model.imagine(state, self.model.pi, 1, eval_mode)
 			a = actions[0]
@@ -130,7 +130,7 @@ class TDMPC2(torch.nn.Module):
 		state = start
 		for t in range(self.cfg.horizon):
 			# _, h = self.model.next(z, actions[t], task, h)
-			state, self.model.dynamics.imagine_with_action(state, actions[t])
+			state = self.model.dynamics.imagine_with_action(actions[t], state)
 			feat = self.model.dynamics.get_feat(state)
 			reward = math.two_hot_inv(self.model.heads['reward'](feat), self.cfg)
 			G += discount * reward
@@ -141,7 +141,7 @@ class TDMPC2(torch.nn.Module):
 		return G + discount * self.model.Q(feat, return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, state, t0=False, eval_mode=False, task=None):
+	def _plan(self, obs, state, prev_action, t0=False, eval_mode=False, task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 
@@ -168,20 +168,27 @@ class TDMPC2(torch.nn.Module):
 		# 	dreamed_traj = self.dream_trajectory(_z, _h, task)
 		# 	pi_actions = dreamed_traj['pis']
 
-		feats, states, actions = self.model.imagine(state, self.model._pi, self.cfg.horizon)
+		# add time dim
+		obs = obs.unsqueeze(1)
+		prev_action = prev_action.unsqueeze(1)
+		embed = self.model._encoder(obs)
+		is_first = torch.tensor([t0], device=self.device).reshape((1, 1, 1))
+		post, _ = self.model.dynamics.observe(embed, prev_action, is_first, state)
+		post = {k: v.repeat(self.cfg.num_pi_trajs, 1) for k, v in post.items()}
+		feats, states, pi_actions = self.model.imagine(post, self.model._pi, self.cfg.horizon)
 
 		# # Initialize state and parameters
 		# z_orig = z
 		# h_orig = h
 		# z = z.repeat(self.cfg.num_samples, 1)
 		# h = h.repeat(self.cfg.num_samples, 1) if h is not None else None
-		# mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
-		# std = torch.full((self.cfg.horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
-		# if not t0:
-		# 	mean[:-1] = self._prev_mean[1:]
-		# actions = torch.empty(self.cfg.horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
-		# if self.cfg.num_pi_trajs > 0:
-		# 	actions[:, :self.cfg.num_pi_trajs] = pi_actions
+		mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
+		std = torch.full((self.cfg.horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
+		if not t0:
+			mean[:-1] = self._prev_mean[1:]
+		actions = torch.empty(self.cfg.horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
+		if self.cfg.num_pi_trajs > 0:
+			actions[:, :self.cfg.num_pi_trajs] = pi_actions
 
 		# Iterate MPPI
 		for _ in range(self.cfg.iterations):

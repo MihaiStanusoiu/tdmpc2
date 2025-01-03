@@ -351,8 +351,8 @@ class MultiEncoder(nn.Module):
             inputs = torch.cat([obs[k] for k in self.cnn_shapes], -1)
             outputs.append(self._cnn(inputs))
         if self.mlp_shapes:
-            inputs = torch.cat([obs[k] for k in self.mlp_shapes], -1)
-            outputs.append(self._mlp(inputs))
+            # inputs = torch.cat([obs[k] for k in self.mlp_shapes], -1)
+            outputs.append(self._mlp(obs))
         outputs = torch.cat(outputs, -1)
         return outputs
 
