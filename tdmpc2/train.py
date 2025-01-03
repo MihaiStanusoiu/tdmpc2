@@ -22,7 +22,7 @@ from common.logger import Logger
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
 
-
+@hydra.main(config_name='config', config_path='.')
 def train(cfg: dict):
 	"""
 	Script for training single-task / multi-task TD-MPC2 agents.
@@ -73,5 +73,4 @@ def train(cfg: dict):
 
 if __name__ == '__main__':
 	# load config from yaml
-	with hydra.main(config_name='config', config_path='.'):
-		train()
+	train()
