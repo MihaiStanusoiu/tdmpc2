@@ -11,17 +11,25 @@ def missing_dependencies(task):
 	raise ValueError(f'Missing dependencies for task {task}; install dependencies to use this environment.')
 
 try:
+	from envs.pomdp_gym import make_env as make_pomdp_env
+except Exception as e:
+	make_pomdp_env = missing_dependencies
+try:
 	from envs.dmcontrol import make_env as make_dm_control_env
-except:
+except Exception as e:
 	make_dm_control_env = missing_dependencies
 try:
 	from envs.maniskill import make_env as make_maniskill_env
-except:
+except Exception as e:
 	make_maniskill_env = missing_dependencies
 try:
 	from envs.metaworld import make_env as make_metaworld_env
-except:
+except Exception as e:
 	make_metaworld_env = missing_dependencies
+try:
+	from envs.robosuite import make_env as make_robosuite_env
+except Exception as e:
+ 	make_robosuite_env = missing_dependencies
 try:
 	from envs.myosuite import make_env as make_myosuite_env
 except:
@@ -62,7 +70,7 @@ def make_env(cfg):
 
 	else:
 		env = None
-		for fn in [make_dm_control_env, make_maniskill_env, make_metaworld_env, make_myosuite_env]:
+		for fn in [make_pomdp_env, make_dm_control_env, make_maniskill_env, make_metaworld_env, make_robosuite_env, make_myosuite_env]:
 			try:
 				env = fn(cfg)
 			except ValueError:

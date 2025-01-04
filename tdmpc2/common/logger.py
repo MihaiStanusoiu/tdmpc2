@@ -94,7 +94,7 @@ class VideoRecorder:
 
 	def record(self, env):
 		if self.enabled:
-			self.frames.append(env.render())
+			self.frames.append(env.render(mode='rgb_array'))
 
 	def save(self, step, key='videos/eval_video'):
 		if self.enabled and len(self.frames) > 0:
@@ -126,6 +126,7 @@ class Logger:
         self._model_dir = make_dir(self._log_dir / "models")
         self._save_csv = cfg.save_csv
         self._save_agent = cfg.save_agent
+        self._save_buffer = cfg.save_buffer
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
         self._eval = []
@@ -174,10 +175,11 @@ class Logger:
     def model_dir(self):
         return self._model_dir
 
-    def save_agent(self, agent=None, identifier='final'):
+    def save_agent(self, agent=None, buffer=None, identifier='final'):
         if self._save_agent and agent:
             fp = self._model_dir / f'{str(identifier)}.pt'
             agent.save(fp)
+
             if self._wandb:
                 artifact = self._wandb.Artifact(
                     self._group + '-' + str(self._seed) + '-' + str(identifier),
@@ -185,10 +187,21 @@ class Logger:
                 )
                 artifact.add_file(fp)
                 self._wandb.log_artifact(artifact)
+        if self._save_buffer and buffer:
+            bfp = self._model_dir / f'{str(identifier)}.buffer'
+            buffer.dumps(bfp)
 
-    def finish(self, agent=None):
+            if self._wandb:
+                artifact = self._wandb.Artifact(
+                    self._group + '-' + str(self._seed) + '-' + str(identifier) + '-buffer',
+                    type='dataset',
+                )
+                artifact.add_file(fp)
+                self._wandb.log_artifact(artifact)
+
+    def finish(self, agent=None, buffer=None):
         try:
-            self.save_agent(agent)
+            self.save_agent(agent, buffer)
         except Exception as e:
             print(colored(f"Failed to save model: {e}", "red"))
         if self._wandb:
