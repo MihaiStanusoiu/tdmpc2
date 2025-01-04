@@ -112,7 +112,7 @@ class TDMPC2(torch.nn.Module):
 			a = self.plan(obs, t0=t0, h=h, eval_mode=eval_mode, task=task)
 		else:
 			z = self.model.encode(obs, task)
-			a = self.model.pi(z, task)[int(not eval_mode)][0]
+			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
 		return a.cpu()
 
 	@torch.no_grad()
@@ -128,7 +128,7 @@ class TDMPC2(torch.nn.Module):
 		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], task, return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, obs, t0=False, h=None,  eval_mode=False, task=None):
+	def _plan(self, obs, t0=False, h=None, eval_mode=False, task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 

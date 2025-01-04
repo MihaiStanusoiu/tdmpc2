@@ -4,6 +4,10 @@ defaults:
 # environment
 task: dog-run
 obs: state
+pomdp_type: None
+flicker_prob: 0.2
+random_noise_sigma: 0.1
+random_sensor_missing_prob: 0.1
 # robosuite specific
 rs_env_name: PickPlaceSingle
 rs_robots: IIWA
@@ -24,7 +28,7 @@ value_coef: 0.1
 consistency_coef: 20
 rho: 0.5
 lr: 3e-4
-burn_in: 6
+burn_in: 0
 enc_lr_scale: 0.3
 grad_clip_norm: 1000
 tau: 0.01
