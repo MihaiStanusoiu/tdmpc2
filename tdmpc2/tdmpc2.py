@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -123,16 +124,17 @@ class TDMPC2(torch.nn.Module):
 		return a.cpu()
 
 	@torch.no_grad()
-	def _estimate_value(self, start, actions, task):
+	def _estimate_value(self, embed, start, actions, task):
 		# TODO: lambda-return
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		state = start
 		for t in range(self.cfg.horizon):
 			# _, h = self.model.next(z, actions[t], task, h)
-			state = self.model.dynamics.imagine_with_action(actions[t], state)
+			state = self.model.dynamics.imagine_with_action(actions[t:t+1], state)
+			state = {k: v.squeeze(1) for k, v in state.items()}
 			feat = self.model.dynamics.get_feat(state)
-			reward = math.two_hot_inv(self.model.heads['reward'](feat), self.cfg)
+			reward = math.two_hot_inv(self.model.heads['reward'](feat).mean(), self.cfg)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
@@ -173,15 +175,16 @@ class TDMPC2(torch.nn.Module):
 		prev_action = prev_action.unsqueeze(1)
 		embed = self.model._encoder(obs)
 		is_first = torch.tensor([t0], device=self.device).reshape((1, 1, 1))
-		post, _ = self.model.dynamics.observe(embed, prev_action, is_first, state)
-		post = {k: v.repeat(self.cfg.num_pi_trajs, 1) for k, v in post.items()}
-		feats, states, pi_actions = self.model.imagine(post, self.model._pi, self.cfg.horizon)
+		# post, _ = self.model.dynamics.observe(embed, prev_action, is_first, state)
+		_state = {k: v.repeat([self.cfg.num_pi_trajs] + np.ones(v.dim() - 1, dtype=np.int32).tolist()).unsqueeze(1) for k, v in state.items()}
+		feats, states, pi_actions = self.model.imagine(_state, self.model._pi, self.cfg.horizon)
 
 		# # Initialize state and parameters
 		# z_orig = z
 		# h_orig = h
 		# z = z.repeat(self.cfg.num_samples, 1)
 		# h = h.repeat(self.cfg.num_samples, 1) if h is not None else None
+		state = {k: v.repeat([self.cfg.num_samples] + np.ones(v.dim() - 1, dtype=np.int32).tolist()) for k, v in state.items()}
 		mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
 		std = torch.full((self.cfg.horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
 		if not t0:
@@ -204,8 +207,8 @@ class TDMPC2(torch.nn.Module):
 			# Compute elite actions
 			# _, h_next = self.model.next(z, actions, task, h)
 			# z_next = self.model.dynamics(h_next)
-			value = self._estimate_value(state, actions, task).nan_to_num(0)
-			elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
+			value = self._estimate_value(embed, state, actions, task).nan_to_num(0)
+			elite_idxs = torch.topk(value, self.cfg.num_elites, dim=0).indices
 			elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
 			# Update parameters

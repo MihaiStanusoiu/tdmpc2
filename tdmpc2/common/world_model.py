@@ -112,7 +112,8 @@ class WorldModel(nn.Module):
             name="Actor",
         )
 		# self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		# self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])\
+		self._Qs = self.heads['V']
 		self.apply(init.weight_init)
 		# init.zero_([self.heads['reward'].weight, self._Qs.params["2", "weight"]])
 
