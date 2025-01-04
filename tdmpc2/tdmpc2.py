@@ -208,7 +208,7 @@ class TDMPC2(torch.nn.Module):
 			# _, h_next = self.model.next(z, actions, task, h)
 			# z_next = self.model.dynamics(h_next)
 			value = self._estimate_value(embed, state, actions, task).nan_to_num(0)
-			elite_idxs = torch.topk(value, self.cfg.num_elites, dim=0).indices
+			elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
 			elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
 			# Update parameters
