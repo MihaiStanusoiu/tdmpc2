@@ -41,7 +41,7 @@ class OfflineTrainer(Trainer):
 				
 	def train(self):
 		"""Train a TD-MPC2 agent."""
-		assert self.cfg.multitask and self.cfg.task in {'mt30', 'mt80'}, \
+		assert self.cfg.multitask and self.cfg.task in {'mt30', 'mt80', 'mw_manipulate'}, \
 			'Offline training only supports multitask training with mt30 or mt80 task sets.'
 
 		# Load data

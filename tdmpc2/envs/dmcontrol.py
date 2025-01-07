@@ -4,7 +4,7 @@ import dm_env
 import numpy as np
 from envs.tasks import cheetah, walker, hopper, reacher, ball_in_cup, pendulum, fish
 from dm_control import suite
-suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom')
+suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom') + suite._get_tasks('loca')
 suite.TASKS_BY_DOMAIN = suite._get_tasks_by_domain(suite.ALL_TASKS)
 from dm_control.suite.wrappers import action_scale
 from dm_env import StepType, specs

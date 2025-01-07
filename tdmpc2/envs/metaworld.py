@@ -13,15 +13,17 @@ class MetaWorldWrapper(gym.Wrapper):
 		self.camera_name = "corner2"
 		self.env.model.cam_pos[2] = [0.75, 0.075, 0.7]
 		self.env._freeze_rand_vec = False
+		self.env.action_repeat = cfg.action_repeat if hasattr(cfg, 'action_repeat') else 2
 
 	def reset(self, **kwargs):
-		obs = super().reset(**kwargs).astype(np.float32)
+		obs = super().reset(**kwargs)
+		obs = obs.astype(np.float32)
 		self.env.step(np.zeros(self.env.action_space.shape))
 		return obs
 
 	def step(self, action):
 		reward = 0
-		for _ in range(2):
+		for _ in range(self.env.action_repeat):
 			obs, r, _, info = self.env.step(action.copy())
 			reward += r
 		obs = obs.astype(np.float32)
