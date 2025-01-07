@@ -22,6 +22,8 @@ class TDMPC2(torch.nn.Module):
 		self.cfg = cfg
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
+		if self.cfg.compile:
+			self.model = torch.compile(self.model)
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			# {'params': self.model._rnn.parameters()},
@@ -29,7 +31,7 @@ class TDMPC2(torch.nn.Module):
 			# {'params': self.model._posterior.parameters()},
 			{'params': self.model.heads['reward'].parameters()},
 			{'params': self.model.heads['V'].parameters()},
-			{'params': self.model.heads['is_first'].parameters()},
+			# {'params': self.model.heads['is_first'].parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []
 			 }
 		], lr=self.cfg.lr, capturable=True)
@@ -43,7 +45,7 @@ class TDMPC2(torch.nn.Module):
 		self._prev_mean = torch.nn.Buffer(torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device))
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
-			self._update = torch.compile(self._update, mode="reduce-overhead")
+			# self._update = torch.compile(self._update, mode="reduce-overhead")
 			self._burn_in_rollout = torch.compile(self._burn_in_rollout, mode="reduce-overhead")
 
 	@property
@@ -51,10 +53,10 @@ class TDMPC2(torch.nn.Module):
 		_plan_val = getattr(self, "_plan_val", None)
 		if _plan_val is not None:
 			return _plan_val
-		if self.cfg.compile:
-			plan = torch.compile(self._plan, mode="reduce-overhead")
-		else:
-			plan = self._plan
+		# if self.cfg.compile:
+		# 	plan = torch.compile(self._plan, mode="reduce-overhead")
+		# else:
+		plan = self._plan
 		self._plan_val = plan
 		return self._plan_val
 
@@ -113,7 +115,8 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: Action to take in the environment.
 		"""
-		# obs = obs.to(self.device, non_blocking=True).unsqueeze(0)
+		obs = obs.to(self.device, non_blocking=True).unsqueeze(0)
+		prev_action = prev_action.unsqueeze(0)
 		if task is not None:
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
@@ -171,8 +174,6 @@ class TDMPC2(torch.nn.Module):
 		# 	pi_actions = dreamed_traj['pis']
 
 		# add time dim
-		obs = obs.unsqueeze(1)
-		prev_action = prev_action.unsqueeze(1)
 		embed = self.model._encoder(obs)
 		is_first = torch.tensor([t0], device=self.device).reshape((1, 1, 1))
 		# post, _ = self.model.dynamics.observe(embed, prev_action, is_first, state)
@@ -243,8 +244,10 @@ class TDMPC2(torch.nn.Module):
 			float: Loss of the policy update.
 		"""
 		qs = []
-		policy = self.model._pi(feats)
-		for feat, state in zip(feats, states):
+		policy = self.model._pi
+		# zip feat and each value in state, where state is dict
+		for feat, logit, deter, stoch in zip(feats, states['logit'], states['deter'], states['stoch']):
+			state = { 'logit': logit.unsqueeze(1), 'deter': deter.unsqueeze(1), 'stoch': stoch.unsqueeze(1) }
 			succ_feats, succ_states, actions = self.model.imagine(state, policy, 1)
 			q = self.model.Q(succ_feats[0], return_type='avg', detach=True)
 			qs.append(q)
@@ -253,10 +256,10 @@ class TDMPC2(torch.nn.Module):
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
 
-		log_pis = policy.log_prob(actions)
+		log_pis = policy(feats).log_prob(actions)
 		# Loss is a weighted sum of Q-values
 		rho = torch.pow(self.cfg.rho, torch.arange(len(qs), device=self.device))
-		pi_loss = ((self.cfg.entropy_coef * log_pis - qs).mean(dim=(1,2)) * rho).mean()
+		pi_loss = ((self.cfg.entropy_coef * log_pis.unsqueeze(-1) - qs).mean(dim=(1,2)) * rho).mean()
 		pi_loss.backward()
 		pi_grad_norm = torch.nn.utils.clip_grad_norm_(self.model._pi.parameters(), self.cfg.grad_clip_norm)
 		self.pi_optim.step()
@@ -272,20 +275,21 @@ class TDMPC2(torch.nn.Module):
 
 	@torch.no_grad()
 	def _compute_target(self, imag_feat, reward):
-		discount = self._config.discount * torch.ones_like(reward)
-		value = self.model.Q(imag_feat, target=True).mode()
-		target = tools.lambda_return(
-			reward[1:],
-			value[:-1],
-			discount[1:],
-			bootstrap=value[-1],
-			lambda_=self._config.discount_lambda,
-			axis=0,
-		)
-		weights = torch.cumprod(
-			torch.cat([torch.ones_like(discount[:1]), discount[:-1]], 0), 0
-		).detach()
-		return target, weights, value[:-1]
+		return reward + self.discount * self.model.Q(imag_feat, return_type='min', target=True)
+		# discount = self.discount * torch.ones_like(reward)
+		# value = self.model.Q(imag_feat, target=True).mode()
+		# target = tools.lambda_return(
+		# 	reward[1:],
+		# 	value[:-1],
+		# 	discount[1:],
+		# 	bootstrap=value[-1],
+		# 	lambda_=self._config.discount_lambda,
+		# 	axis=0,
+		# )
+		# weights = torch.cumprod(
+		# 	torch.cat([torch.ones_like(self.discount[:1]), self.discount[:-1]], 0), 0
+		# ).detach()
+		# return target, weights, value[:-1]
 
 	@staticmethod
 	def _mask(value, mask):
@@ -395,7 +399,7 @@ class TDMPC2(torch.nn.Module):
 		self.model.train()
 
 		# RSSM training
-		embed = self.model.encoder(obs)
+		embed = self.model._encoder(obs)
 		post, prior = self.model.dynamics.observe(embed, action, is_first)
 		kl_free = self.cfg.kl_free
 		dyn_scale = self.cfg.dyn_scale
@@ -404,38 +408,41 @@ class TDMPC2(torch.nn.Module):
 			post, prior, kl_free, dyn_scale, rep_scale
 		)
 		assert kl_loss.shape == embed.shape[:2], kl_loss.shape
+		kl_loss = torch.mean(kl_loss)
 
-		feat = self.dynamics.get_feat(post)
+		feat = self.model.dynamics.get_feat(post)
 		qs = self.model.heads['V'](feat)
 		reward_preds = self.model.heads['reward'](feat)
-		is_first_preds = self.model.heads['cont'](feat)
+		# is_first_preds = self.model.heads['is_first'](feat).mode()
 		context = dict(
 			embed=embed,
 			feat=feat,
 			kl=kl_value,
-			postent=self.dynamics.get_dist(post).entropy(),
+			postent=self.model.dynamics.get_dist(post).entropy(),
 		)
 
 		# # fold time dimension for zs and hs: [T, B, D] -> [T*B, D]
 		# zs_TxB = zs[:-1].reshape(-1, zs.shape[-1])
 		# hs_TxB = hs[:-1].reshape(-1, hs.shape[-1])
-		td_targets = self._compute_target(feat, reward)
+		with torch.no_grad():
+			td_targets = self._compute_target(feat[1:].detach(), reward[:-1])
 
 		# Compute losses
-		reward_loss, value_loss, is_first_loss = 0, 0
-		for t, (rew_pred_unbind, rew_unbind, is_first_pred_unbind, is_first_unbind, td_targets_unbind, qs_unbind) in enumerate(zip(reward_preds.unbind(0), reward.unbind(0), is_first_preds.unbind(0), is_first.unbind(0), td_targets.unbind(0), qs.unbind(1))):
-			reward_loss = reward_loss + math.soft_ce(rew_pred_unbind, rew_unbind, self.cfg).mean() * self.cfg.rho**t
-			is_first_loss = is_first_loss + math.soft_ce(is_first_preds.unbind, is_first_unbind, self.cfg).mean() * self.cfg.rho**t
+		reward_loss = torch.mean(-reward_preds.log_prob(reward))
+		value_loss = 0
+		for t, (rew_unbind, td_targets_unbind, qs_unbind) in enumerate(zip(reward.unbind(0), td_targets.unbind(0), qs.unbind(1))):
+			# reward_loss = reward_loss - reward_preds.log_prob(rew_unbind) * self.cfg.rho**t
+			# is_first_loss = is_first_loss + math.soft_ce(is_first_preds.unbind, is_first_unbind, self.cfg).mean() * self.cfg.rho**t
 			for _, qs_unbind_unbind in enumerate(qs_unbind.unbind(0)):
 				value_loss = value_loss + math.soft_ce(qs_unbind_unbind, td_targets_unbind, self.cfg).mean() * self.cfg.rho**t
 
 		reward_loss = reward_loss / self.cfg.horizon
-		is_first_loss = is_first_loss / self.cfg.horizon
+		# is_first_loss = is_first_loss / self.cfg.horizon
 		value_loss = value_loss / (self.cfg.horizon * self.cfg.num_q)
 		total_loss = (
 			kl_loss +
 			self.cfg.reward_coef * reward_loss +
-			self.cfg.is_first_coef * is_first_loss +
+			# self.cfg.is_first_coef * is_first_loss +
 			self.cfg.value_coef * value_loss
 		)
 
@@ -450,7 +457,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Update policy
 		# pi_loss, pi_grad_norm = self.update_pi(dreamed_traj['zs'].detach(), dreamed_traj['hs'].detach(), dreamed_traj['pis'], dreamed_traj['log_pis'], task)
-		pi_loss, pi_grad_norm = self.update_pi(feat.detach(), post.detach())
+		post = {k: v.detach() for k, v in post.items()}
+		pi_loss, pi_grad_norm = self.update_pi(feat.detach(), post)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
@@ -461,7 +469,7 @@ class TDMPC2(torch.nn.Module):
 			"dynamics_loss": kl_loss,
 			"reward_loss": reward_loss,
 			"value_loss": value_loss,
-			"is_first_loss": is_first_loss,
+			# "is_first_loss": is_first_loss,
 			"pi_loss": pi_loss,
 			"total_loss": total_loss,
 			"grad_norm": grad_norm,

@@ -29,6 +29,7 @@ class OnlineTrainer(Trainer):
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, state = self.env.reset(), False, 0, 0, self.agent.model.dynamics.initial(1)
+			# state = {k: v.unsqueeze(1) for k, v in state.items()}
 			prev_action = torch.zeros((1, self.env.action_space.shape[0]), dtype=torch.float32)
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
@@ -38,7 +39,8 @@ class OnlineTrainer(Trainer):
 				action = self.agent.act(obs.cuda().unsqueeze(0), state, prev_action, t0=t==0, eval_mode=True)
 				with torch.no_grad():
 					# _, h_next = self.agent.model.next(state['z'], action.cuda().unsqueeze(0), None, state['h'])
-					state, _ = self.agent.model.dynamics.observe(self.agent.model._encoder(obs.cuda().unsqueeze(0)), action.cuda.unsqueeze(0), False, state)
+					state, _ = self.agent.model.dynamics.observe(self.agent.model._encoder(obs.cuda().unsqueeze(0).unsqueeze(0)), action.cuda().unsqueeze(0).unsqueeze(0), torch.tensor([t == 0]).unsqueeze(0).unsqueeze(0), state)
+					state = {k: v.squeeze(1) for k, v in state.items()}
 					# _, hidden = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=hidden)
 				obs, reward, done, info = self.env.step(action)
 				ep_reward += reward
@@ -99,7 +101,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
 					identifier = f'{self._step}' if not self.cfg.override else 'final'
-					self.logger.save_agent(self.agent, None, identifier=f'{self._step}')
+					self.logger.save_agent(self.agent, None, identifier=identifier)
 					eval_next = False
 					reset_success_count = True
 
@@ -129,7 +131,8 @@ class OnlineTrainer(Trainer):
 				is_first = True
 				state = self.agent.model.dynamics.initial(1)
 				prev_action = torch.zeros((1, self.env.action_space.shape[0]), dtype=torch.float32)
-				self._tds = [self.to_td(obs, is_first=True)]
+				self._tds = []
+				# self._tds = [self.to_td(obs, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
@@ -137,11 +140,13 @@ class OnlineTrainer(Trainer):
 			else:
 				action = self.env.rand_act()
 			prev_action = action
-			obs, reward, done, info = self.env.step(action)
+			next_obs, reward, done, info = self.env.step(action)
 			with torch.no_grad():
-				state, _ = self.agent.model.dynamics.observe(self.agent.model._encoder(obs), action, False, state)
-				# _, h_next = self.agent.model.next(state['z'], action.cuda().unsqueeze(0), None, state['h'])
+				state, _ = self.agent.model.dynamics.observe(self.agent.model._encoder(obs.cuda().unsqueeze(0).unsqueeze(0)), action.cuda().unsqueeze(0).unsqueeze(0), torch.tensor(len(self._tds)==1).reshape(1, 1, 1), state)
+				state = {k: v.squeeze(1) for k, v in state.items()}
+			# _, h_next = self.agent.model.next(state['z'], action.cuda().unsqueeze(0), None, state['h'])
 			self._tds.append(self.to_td(obs, action, reward, is_first=False))
+			obs = next_obs
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:
@@ -150,8 +155,8 @@ class OnlineTrainer(Trainer):
 					print('Pretraining agent on seed data...')
 				else:
 					num_updates = 1
-				for _ in range(num_updates):
-					_train_metrics = self.agent.update(self.buffer)
+				# for j in range(num_updates): #TODO: uncomment this
+				_train_metrics = self.agent.update(self.buffer)
 				train_metrics.update(_train_metrics)
 				train_metrics.update(
 					step=self._step

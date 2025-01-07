@@ -70,30 +70,31 @@ class WorldModel(nn.Module):
 			device=self._device,
 			name="Reward",
 		)
-		self.heads["is_first"] = networks.MLP(
-			feat_size,
-			(),
-			cfg.is_first_head["layers"],
-			cfg.mlp_dim,
-			cfg.act,
-			cfg.norm,
-			dist="binary",
-			outscale=cfg.is_first_head["outscale"],
-			device=self._device,
-			name="Cont",
-		)
-		self.heads['V'] = layers.Ensemble([networks.MLP(
-			feat_size,
-			(255,) if cfg.V_head["dist"] == "symlog_disc" else (),
-			cfg.V_head["layers"],
-			cfg.mlp_dim,
-			cfg.act,
-			cfg.norm,
-			dist=cfg.V_head["dist"],
-			outscale=cfg.V_head["outscale"],
-			device=self._device,
-			name="V",
-		)])
+		# self.heads["is_first"] = networks.MLP(
+		# 	feat_size,
+		# 	(),
+		# 	cfg.is_first_head["layers"],
+		# 	cfg.mlp_dim,
+		# 	cfg.act,
+		# 	cfg.norm,
+		# 	dist="binary",
+		# 	outscale=cfg.is_first_head["outscale"],
+		# 	device=self._device,
+		# 	name="Cont",
+		# )
+		# self.heads['V'] = layers.Ensemble([networks.MLP(
+		# 	feat_size,
+		# 	max(cfg.num_bins, 1),
+		# 	cfg.V_head["layers"],
+		# 	cfg.mlp_dim,
+		# 	cfg.act,
+		# 	cfg.norm,
+		# 	dist=cfg.V_head["dist"],
+		# 	outscale=cfg.V_head["outscale"],
+		# 	device=self._device,
+		# 	name="V",
+		# )])
+		self.heads['V'] = layers.Ensemble([layers.mlp(feat_size, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self._pi = networks.MLP(
             feat_size,
             (cfg.action_dim,),
@@ -138,8 +139,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'V-functions', 'Is first predictor']
-		for i, m in enumerate([self._encoder, self.dynamics, self.heads['reward'], self._pi, self.heads['V'], self.heads['is_first']]):
+		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'V-functions']
+		for i, m in enumerate([self._encoder, self.dynamics, self.heads['reward'], self._pi, self.heads['V']]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr

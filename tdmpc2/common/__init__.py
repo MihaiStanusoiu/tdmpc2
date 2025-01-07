@@ -3,7 +3,23 @@ MODEL_SIZE = { # parameters (M)
 		  'mlp_dim': 384,
 		  'latent_dim': 128,
 		  'num_enc_layers': 2,
-		  'num_q': 2},
+		  'num_q': 2,
+		  'dyn_discrete': 16,
+		  'dyn_stoch': 16,
+		  'encoder':
+			  {
+				'mlp_keys': 'state',
+				  'cnn_keys': 'image',
+				  'act': 'SiLU',
+				  'norm': True,
+				  'cnn_depth': 16,
+				  'kernel_size': 4,
+				  'minres': 4,
+				  'mlp_layers': 2,
+				  'mlp_units': 256,
+				  'symlog_inputs': False
+			  }
+		  },
 	5:   {'enc_dim': 256,
 		  'mlp_dim': 512,
 		  'latent_dim': 512,

@@ -72,8 +72,8 @@ class Buffer():
 		"""
 		td = td.select("obs", "action", "reward", "h", "next_h", "is_first", "task", strict=False).to(self._device, non_blocking=True)
 		obs = td.get('obs').contiguous()
-		action = td.get('action')[1:].contiguous()
-		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
+		action = td.get('action').contiguous()
+		reward = td.get('reward').unsqueeze(-1).contiguous()
 		# h = td['h'].contiguous()
 		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)

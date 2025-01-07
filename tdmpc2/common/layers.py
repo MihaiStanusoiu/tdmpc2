@@ -30,7 +30,7 @@ class Ensemble(nn.Module):
 
 	def _call(self, params, *args, **kwargs):
 		with params.to_module(self.module):
-			return self.module(*args, **kwargs).mode()
+			return self.module(*args, **kwargs)
 
 	def forward(self, *args, **kwargs):
 		return torch.vmap(self._call, (0, None), randomness="different")(self.params, *args, **kwargs)

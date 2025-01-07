@@ -127,8 +127,8 @@ episode_length: ???
 obs_shapes: ???
 action_dims: ???
 episode_lengths: ???
-seed_steps: 100
+seed_steps: ???
 bin_size: ???
 
 # speedups
-compile: False
+compile: True
