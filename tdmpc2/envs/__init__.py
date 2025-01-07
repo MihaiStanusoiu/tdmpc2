@@ -73,7 +73,7 @@ def make_env(cfg):
 		for fn in [make_pomdp_env, make_dm_control_env, make_maniskill_env, make_metaworld_env, make_robosuite_env, make_myosuite_env]:
 			try:
 				env = fn(cfg)
-			except ValueError:
+			except:
 				pass
 		if env is None:
 			raise ValueError(f'Failed to make environment "{cfg.task}": please verify that dependencies are installed and that the task exists.')
