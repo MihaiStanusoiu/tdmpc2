@@ -6,6 +6,8 @@ from common.scale import RunningScale
 from common.world_model import WorldModel
 from tensordict import TensorDict
 
+from graphviz import Digraph
+from torchviz import make_dot
 
 class TDMPC2(torch.nn.Module):
 	"""
@@ -22,6 +24,7 @@ class TDMPC2(torch.nn.Module):
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
+			# {'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []
@@ -35,6 +38,7 @@ class TDMPC2(torch.nn.Module):
 			[self._get_discount(ep_len) for ep_len in cfg.episode_lengths], device='cuda:0'
 		) if self.cfg.multitask else self._get_discount(cfg.episode_length)
 		self._prev_mean = torch.nn.Buffer(torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device))
+		self._first_update = True
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
 			self._update = torch.compile(self._update, mode="reduce-overhead")
@@ -112,7 +116,7 @@ class TDMPC2(torch.nn.Module):
 			a = self.plan(obs, t0=t0, h=h, eval_mode=eval_mode, task=task)
 		else:
 			z = self.model.encode(obs, task)
-			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
+			a = self.model.pi(z, task)[int(not eval_mode)][0]
 		return a.cpu()
 
 	@torch.no_grad()
@@ -125,7 +129,7 @@ class TDMPC2(torch.nn.Module):
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
-		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], task, return_type='avg')
+		return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
 
 	@torch.no_grad()
 	def _plan(self, obs, t0=False, h=None, eval_mode=False, task=None):
@@ -150,9 +154,9 @@ class TDMPC2(torch.nn.Module):
 				h = self.initial_h.detach()
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
-				pi_actions[t] = self.model.pi(_z, _h, task)[1]
+				pi_actions[t] = self.model.pi(_z, task)[1]
 				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
-			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
+			pi_actions[-1] = self.model.pi(_z, task)[1]
 
 		# Initialize state and parameters
 		z_orig = z
@@ -214,7 +218,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			float: Loss of the policy update.
 		"""
-		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
+		_, pis, log_pis, _ = self.model.pi(zs, task)
 		qs = self.model.Q(zs, pis, task, return_type='avg', detach=True)
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
@@ -242,7 +246,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: TD-target.
 		"""
-		pi = self.model.pi(next_z, hidden, task)[1]
+		pi = self.model.pi(next_z, task)[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
 		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
 
@@ -251,6 +255,7 @@ class TDMPC2(torch.nn.Module):
 		# Apply element-wise multiplication with broadcasting in PyTorch
 		return value * mask.to(value.dtype)
 
+	@torch.no_grad()
 	def _burn_in_rollout(self, obs_t0, obs, action, hidden, is_first, task=None):
 		"""
 		Perform a burn-in rollout to initialize hidden states.
@@ -271,7 +276,7 @@ class TDMPC2(torch.nn.Module):
 			h = self.initial_h
 			for t, (_obs, _action, _is_first) in enumerate(zip(obs.unbind(0), action.unbind(0), is_first.unbind(0))):
 				h = self._mask(h, 1.0 - _is_first.float())
-				h = h + self._mask(self.initial_h.detach(), _is_first.float())
+				h = h + self._mask(self.initial_h, _is_first.float())
 				_, h = self.model.next(z, _action, task, h)
 				z = self.model.encode(_obs, task)
 
@@ -307,7 +312,7 @@ class TDMPC2(torch.nn.Module):
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
-			ht = ht + self._mask(self.initial_h.detach(), _is_first.float())
+			ht = ht + self._mask(self.initial_h, _is_first.float()) #TODO: remove detach
 			z, h = self.model.next(z, _action, task, ht)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
@@ -336,6 +341,8 @@ class TDMPC2(torch.nn.Module):
 		)
 
 		# Update model
+		if self._first_update and not self.cfg.compile:
+			make_dot(total_loss, dict(list(self.model.named_parameters()))).view()
 		total_loss.backward()
 		grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm)
 		self.optim.step()
@@ -349,6 +356,7 @@ class TDMPC2(torch.nn.Module):
 
 		# Return training statistics
 		self.model.eval()
+		self._first_update = False
 		return TensorDict({
 			"consistency_loss": consistency_loss,
 			"reward_loss": reward_loss,

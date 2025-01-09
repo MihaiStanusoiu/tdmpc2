@@ -1,8 +1,8 @@
 MODEL_SIZE = { # parameters (M)
-	0.5: {'enc_dim': 128,
+	0.5: {'enc_dim': 256,
 		  'mlp_dim': 192,
 		  'hidden_dim': 32,
-		  'latent_dim': 64,
+		  'latent_dim': 128,
 		  'num_enc_layers': 2,
 		  'num_q': 2},
 	1:   {'enc_dim': 256,

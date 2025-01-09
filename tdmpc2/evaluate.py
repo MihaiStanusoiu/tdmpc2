@@ -1,5 +1,5 @@
 import os
-os.environ['MUJOCO_GL'] = 'egl'
+os.environ['MUJOCO_GL'] = 'glfw'
 import warnings
 warnings.filterwarnings('ignore')
 
