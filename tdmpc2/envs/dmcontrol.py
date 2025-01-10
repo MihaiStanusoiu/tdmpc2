@@ -2,9 +2,15 @@ from collections import deque, defaultdict
 from typing import Any, NamedTuple
 import dm_env
 import numpy as np
-from dm_control.composer import Environment
+from dm_control.composer import Environment, ObservationPadding, Robot, Entity
+from dm_control.composer.variation import noises, distributions
+from dm_control.locomotion import tasks
+from dm_control.locomotion.walkers.base import Walker
+from dm_control.manipulation.place import Place
 from envs.tasks import cheetah, walker, hopper, reacher, ball_in_cup, pendulum, fish
-from dm_control import suite
+from dm_control import suite, composer, manipulation
+from torchrl.modules import distributions_maps
+
 suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom') + suite._get_tasks('loca')
 suite.TASKS_BY_DOMAIN = suite._get_tasks_by_domain(suite.ALL_TASKS)
 from dm_control.suite.wrappers import action_scale
@@ -193,7 +199,7 @@ def make_env(cfg):
 	env = suite.load(domain,
 					 task,
 					 task_kwargs={'random': cfg.seed},
-					 visualize_reward=False)
+					 visualize_reward=True)
 	env = ActionDTypeWrapper(env, np.float32)
 	env = ActionRepeatWrapper(env, 2)
 	env = action_scale.Wrapper(env, minimum=-1., maximum=1.)
@@ -201,9 +207,16 @@ def make_env(cfg):
 	env = TimeStepToGymWrapper(env, domain, task)
 	return env
 
+
 if __name__ == '__main__':
-	# env = suite.load('walker',
+	# task = suite.load('walker',
 	# 				 'walk',
-	# 				 task_kwargs={'random': 0},
+	# 				  # environment_kwargs={},
+	# 				 task_kwargs={'random': 0, 'random': np.random.RandomState(0), 'delayed_observation_padding': ObservationPadding.INITIAL_VALUE},
 	# 				 visualize_reward=False)
+	env = manipulation.load('place_brick_features', seed=0)
+	task = env.task
+	joint_pos = task.observables['jaco_arm/joints_pos']
+	joint_pos.corruptor = noises.Additive(distributions.Normal(scale=0.01))
+	joint_pos.delay = noises.Additive(distributions.UniformInteger(low=0, high=3))
 	ok = True
