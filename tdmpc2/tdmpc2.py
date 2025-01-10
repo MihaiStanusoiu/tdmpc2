@@ -24,11 +24,11 @@ class TDMPC2(torch.nn.Module):
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
-			# {'params': self.model._dynamics.parameters()},
+			{'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
-			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []
-			 }
+			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
+			{'params': self.model.initial_h if self.cfg.learned_init_h else []},
 		], lr=self.cfg.lr, capturable=True)
 		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
 		self.model.eval()
@@ -92,7 +92,8 @@ class TDMPC2(torch.nn.Module):
 
 	@property
 	def initial_h(self):
-		# return torch.tanh(self.model.initial_h).unsqueeze(0)
+		if self.cfg.learned_init_h:
+			return torch.tanh(self.model.initial_h)
 		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
 	@torch.no_grad()
@@ -312,7 +313,7 @@ class TDMPC2(torch.nn.Module):
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
-			ht = ht + self._mask(self.initial_h, _is_first.float()) #TODO: remove detach
+			ht = ht + self._mask(self.initial_h, _is_first.float())
 			z, h = self.model.next(z, _action, task, ht)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z

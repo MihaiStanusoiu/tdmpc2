@@ -2,6 +2,7 @@ from collections import deque, defaultdict
 from typing import Any, NamedTuple
 import dm_env
 import numpy as np
+from dm_control.composer import Environment
 from envs.tasks import cheetah, walker, hopper, reacher, ball_in_cup, pendulum, fish
 from dm_control import suite
 suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom') + suite._get_tasks('loca')
@@ -199,3 +200,10 @@ def make_env(cfg):
 	env = ExtendedTimeStepWrapper(env)
 	env = TimeStepToGymWrapper(env, domain, task)
 	return env
+
+if __name__ == '__main__':
+	# env = suite.load('walker',
+	# 				 'walk',
+	# 				 task_kwargs={'random': 0},
+	# 				 visualize_reward=False)
+	ok = True

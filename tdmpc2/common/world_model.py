@@ -25,10 +25,10 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim, return_sequences=False)
+		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, return_sequences=False)
 		# self._dynamics = layers.mlp(cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
-		# self.initial_h = nn.Parameter(torch.zeros(cfg.hidden_dim))
+		self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
+		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		self._rnn.batch_first = False
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
@@ -57,8 +57,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._encoder, self._rnn, self._reward, self._pi, self._Qs]):
+		modules = ['Encoder', 'Dynamics', 'RNN Readout', 'Reward', 'Policy prior', 'Q-functions']
+		for i, m in enumerate([self._encoder, self._rnn, self._dynamics, self._reward, self._pi, self._Qs]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -121,8 +121,8 @@ class WorldModel(nn.Module):
 		z = torch.cat([z, a], dim=-1)
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
-		z_next, h = self._rnn(z, h)
-		# z_next = self._dynamics(readout)
+		readout, h = self._rnn(z, h)
+		z_next = self._dynamics(readout)
 		return z_next, h
 
 	def forward(self, obs, a, task=None, h=None):
