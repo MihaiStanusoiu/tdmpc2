@@ -117,7 +117,7 @@ class TDMPC2(torch.nn.Module):
 			a = self.plan(obs, t0=t0, h=h, eval_mode=eval_mode, task=task)
 		else:
 			z = self.model.encode(obs, task)
-			a = self.model.pi(z, task)[int(not eval_mode)][0]
+			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
 		return a.cpu()
 
 	@torch.no_grad()
@@ -130,7 +130,7 @@ class TDMPC2(torch.nn.Module):
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
-		return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
+		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], task, return_type='avg')
 
 	@torch.no_grad()
 	def _plan(self, obs, t0=False, h=None, eval_mode=False, task=None):
@@ -155,9 +155,9 @@ class TDMPC2(torch.nn.Module):
 				h = self.initial_h.detach()
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
-				pi_actions[t] = self.model.pi(_z, task)[1]
+				pi_actions[t] = self.model.pi(_z, _h, task)[1]
 				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
-			pi_actions[-1] = self.model.pi(_z, task)[1]
+			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
 
 		# Initialize state and parameters
 		z_orig = z
@@ -219,7 +219,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			float: Loss of the policy update.
 		"""
-		_, pis, log_pis, _ = self.model.pi(zs, task)
+		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
 		qs = self.model.Q(zs, pis, task, return_type='avg', detach=True)
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
@@ -247,7 +247,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: TD-target.
 		"""
-		pi = self.model.pi(next_z, task)[1]
+		pi = self.model.pi(next_z, hidden, task)[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
 		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
 
