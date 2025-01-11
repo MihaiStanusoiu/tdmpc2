@@ -4,6 +4,7 @@ defaults:
 # environment
 task: dog-run
 obs: state
+sensor_noise: 0.0
 pomdp_type: None
 flicker_prob: 0.2
 random_noise_sigma: 0.1
