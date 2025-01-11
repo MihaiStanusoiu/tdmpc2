@@ -131,7 +131,7 @@ class OnlineTrainer(Trainer):
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
-				action = self.agent.act(obs, t0=len(self._tds)==1, h=h)
+				action = self.agent.act(obs, t0=len(self._tds)==1)
 			else:
 				action = self.env.rand_act()
 			with torch.no_grad():
