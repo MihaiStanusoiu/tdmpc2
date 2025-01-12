@@ -309,7 +309,7 @@ class TDMPC2(torch.nn.Module):
 
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
-		hs[0] = start_h.detach()
+		hs[0] = start_h
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
