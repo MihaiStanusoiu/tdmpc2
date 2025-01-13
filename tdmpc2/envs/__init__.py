@@ -19,6 +19,10 @@ try:
 except Exception as e:
 	make_dm_control_env = missing_dependencies
 try:
+	from envs.dm_manipulation import make_env as make_dm_manipulation_env
+except Exception as e:
+	make_dm_manipulation_env = missing_dependencies
+try:
 	from envs.maniskill import make_env as make_maniskill_env
 except Exception as e:
 	make_maniskill_env = missing_dependencies
@@ -70,10 +74,10 @@ def make_env(cfg):
 
 	else:
 		env = None
-		for fn in [make_pomdp_env, make_dm_control_env, make_maniskill_env, make_metaworld_env, make_robosuite_env, make_myosuite_env]:
+		for fn in [make_pomdp_env, make_dm_control_env, make_dm_manipulation_env, make_maniskill_env, make_metaworld_env, make_robosuite_env, make_myosuite_env]:
 			try:
 				env = fn(cfg)
-			except:
+			except Exception as e:
 				pass
 		if env is None:
 			raise ValueError(f'Failed to make environment "{cfg.task}": please verify that dependencies are installed and that the task exists.')
