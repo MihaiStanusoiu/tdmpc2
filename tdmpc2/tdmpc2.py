@@ -273,8 +273,8 @@ class TDMPC2(torch.nn.Module):
 		"""
 		with torch.no_grad():
 			z = self.model.encode(obs_t0, task)
-			h = hidden[0]
-			# h = self.initial_h
+			# h = hidden[0]
+			h = self.initial_h
 			for t, (_obs, _action, _is_first) in enumerate(zip(obs.unbind(0), action.unbind(0), is_first.unbind(0))):
 				h = self._mask(h, 1.0 - _is_first.float())
 				h = h + self._mask(self.initial_h.detach(), _is_first.float())
