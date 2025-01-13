@@ -5,8 +5,7 @@ from envs.wrappers.mujoco_wrapper import MujocoWrapper
 
 
 class POMDPWrapper(gym.ObservationWrapper):
-    def __init__(self, env_name, pomdp_type=None,
-                 flicker_prob=0.2, random_noise_sigma=0.1, random_sensor_missing_prob=0.1):
+    def __init__(self, env, env_name, cfg):
         """
 
         :param env_name:
@@ -24,16 +23,17 @@ class POMDPWrapper(gym.ObservationWrapper):
             10. random_sensor_missing_and_random_noise:
 
         """
-        super().__init__(gym.make(env_name))
-        self.pomdp_type = pomdp_type
-        self.flicker_prob = flicker_prob
-        self.random_noise_sigma = random_noise_sigma
-        self.random_sensor_missing_prob = random_sensor_missing_prob
+        super().__init__(env)
 
-        if pomdp_type == 'remove_velocity':
+        self.pomdp_type = cfg.pomdp_type
+        self.flicker_prob = cfg.flicker_prob
+        self.random_noise_sigma = cfg.random_noise_sigma
+        self.random_sensor_missing_prob = cfg.random_sensor_missing_prob
+
+        if self.pomdp_type == 'remove_velocity':
             # Remove Velocity info, comes with the change in observation space.
             self.remain_obs_idx, self.observation_space = self._remove_velocity(env_name)
-        elif pomdp_type == 'flickering':
+        elif self.pomdp_type == 'flickering':
             pass
         elif self.pomdp_type == 'random_noise':
             pass
@@ -213,6 +213,7 @@ class POMDPWrapper(gym.ObservationWrapper):
             remain_obs_idx = list(set(np.arange(0, 9)) - set([1, 5, 8]))
         elif env_name == 'ReacherPyBulletEnv-v0':
             remain_obs_idx = list(set(np.arange(0, 9)) - set([6, 8]))
+        #TODO: Add DMControl support
         else:
             raise ValueError('POMDP for {} is not defined!'.format(env_name))
 

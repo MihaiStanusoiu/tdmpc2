@@ -11,6 +11,8 @@ from envs.tasks import cheetah, walker, hopper, reacher, ball_in_cup, pendulum, 
 from dm_control import suite, composer, manipulation
 from torchrl.modules import distributions_maps
 
+from envs.wrappers.pomdp_wrapper import POMDPWrapper
+
 suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom') + suite._get_tasks('loca')
 suite.TASKS_BY_DOMAIN = suite._get_tasks_by_domain(suite.ALL_TASKS)
 from dm_control.suite.wrappers import action_scale
@@ -205,6 +207,7 @@ def make_env(cfg):
 	env = action_scale.Wrapper(env, minimum=-1., maximum=1.)
 	env = ExtendedTimeStepWrapper(env)
 	env = TimeStepToGymWrapper(env, domain, task)
+	env = POMDPWrapper(env, domain, cfg)
 	return env
 
 

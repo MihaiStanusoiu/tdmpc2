@@ -21,6 +21,8 @@ class TDMPC2(torch.nn.Module):
 		self.cfg = cfg
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
+		if self.cfg.compile:
+			self.model = torch.compile(self.model)
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
@@ -114,26 +116,28 @@ class TDMPC2(torch.nn.Module):
 		if task is not None:
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
-			a = self.plan(obs, t0=t0, h=h, eval_mode=eval_mode, task=task)
+			z = self.model.encode(obs, task)
+			a = self.plan(z, t0=t0, h=h, eval_mode=eval_mode, task=task)
+			_, h = self.model.rnn(z, a.unsqueeze(0).detach(), task, h)
 		else:
 			z = self.model.encode(obs, task)
 			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
-		return a.cpu()
+		return a.cpu(), h
 
 	@torch.no_grad()
 	def _estimate_value(self, z, h, actions, task):
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		for t in range(self.cfg.horizon):
-			reward = math.two_hot_inv(self.model.reward(z, actions[t], task), self.cfg)
-			z, h = self.model.next(z, actions[t], task, h)
+			reward = math.two_hot_inv(self.model.reward(z, actions[t], h, task), self.cfg)
+			z, h = self.model.forward(z, actions[t], task, h)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
-		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], task, return_type='avg')
+		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], h, task, return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, obs, t0=False, h=None, eval_mode=False, task=None):
+	def _plan(self, z, t0=False, h=None, eval_mode=False, task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 
@@ -147,7 +151,6 @@ class TDMPC2(torch.nn.Module):
 			torch.Tensor: Action to take in the environment.
 		"""
 		# Sample policy trajectories
-		z = self.model.encode(obs, task)
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_z = z.repeat(self.cfg.num_pi_trajs, 1)
@@ -156,12 +159,12 @@ class TDMPC2(torch.nn.Module):
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(_z, _h, task)[1]
-				_z, _h = self.model.next(_z, pi_actions[t], task, _h)
+				_z, _h = self.model.forward(_z, pi_actions[t], task, _h)
 			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
 
 		# Initialize state and parameters
-		z_orig = z
-		h_orig = h
+		h_orig = h.clone()
+		z_orig = z.clone()
 		z = z.repeat(self.cfg.num_samples, 1)
 		h = h.repeat(self.cfg.num_samples, 1) if h is not None else None
 		mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
@@ -220,7 +223,7 @@ class TDMPC2(torch.nn.Module):
 			float: Loss of the policy update.
 		"""
 		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
-		qs = self.model.Q(zs, pis, task, return_type='avg', detach=True)
+		qs = self.model.Q(zs, pis, hs, task, return_type='avg', detach=True)
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
 
@@ -235,7 +238,7 @@ class TDMPC2(torch.nn.Module):
 		return pi_loss.detach(), pi_grad_norm
 
 	@torch.no_grad()
-	def _td_target(self, next_z, hidden, reward, task):
+	def _td_target(self, next_z, h, reward, task):
 		"""
 		Compute the TD-target from a reward and the observation at the following time step.
 
@@ -247,9 +250,9 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: TD-target.
 		"""
-		pi = self.model.pi(next_z, hidden, task)[1]
+		pi = self.model.pi(next_z, h, task)[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
-		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
+		return reward + discount * self.model.Q(next_z, pi, h, task, return_type='min', target=True)
 
 	@staticmethod
 	def _mask(value, mask):
@@ -283,7 +286,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, obs, action, reward, hidden, start_h, is_first, task=None):
+	def _update(self, prev_obs, prev_action, obs, action, reward, hidden, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -294,11 +297,13 @@ class TDMPC2(torch.nn.Module):
 			dict: Dictionary of training statistics.
 		"""
 
-	
-		# Compute targets
 		with torch.no_grad():
 			next_z = self.model.encode(obs[1:], task)
-			td_targets = self._td_target(next_z,  hidden[1:].detach(), reward, task)
+
+		# Encoding memory
+		prev_z = self.model.encode(prev_obs, task)
+		h = self.initial_h.repeat(self.cfg.batch_size, 1)
+		_, h = self.model.rnn(prev_z, prev_action, task, h)
 
 		# Prepare for update
 		self.model.train()
@@ -309,12 +314,12 @@ class TDMPC2(torch.nn.Module):
 
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
-		hs[0] = start_h
+		hs[0] = h.detach()
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
 			ht = ht + self._mask(self.initial_h.detach(), _is_first.float())
-			z, h = self.model.next(z, _action, task, hs[t])
+			z, h = self.model.forward(z, _action, task, hs[t])
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
 			hs[t+1] = h
@@ -322,8 +327,12 @@ class TDMPC2(torch.nn.Module):
 		# Predictions
 		_zs = zs[:-1]
 		_hs = hs[:-1]
-		qs = self.model.Q(_zs, action, task, return_type='all')
-		reward_preds = self.model.reward(_zs, action, task)
+		qs = self.model.Q(_zs, action, _hs, task, return_type='all')
+		reward_preds = self.model.reward(_zs, action, _hs, task)
+
+		# Compute targets
+		with torch.no_grad():
+			td_targets = self._td_target(next_z, hs[1:], reward, task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -384,6 +393,6 @@ class TDMPC2(torch.nn.Module):
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
-		h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward[self.cfg.burn_in:], hidden[self.cfg.burn_in:], h, is_first[self.cfg.burn_in:], **kwargs)
+		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
+		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward[self.cfg.burn_in:], hidden[self.cfg.burn_in:], is_first[self.cfg.burn_in:], **kwargs)
 

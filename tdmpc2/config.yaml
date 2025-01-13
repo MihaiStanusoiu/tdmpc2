@@ -29,7 +29,7 @@ value_coef: 0.1
 consistency_coef: 20
 rho: 0.5
 lr: 3e-4
-burn_in: 0
+burn_in: 10
 enc_lr_scale: 0.3
 grad_clip_norm: 1000
 tau: 0.01

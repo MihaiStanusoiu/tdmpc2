@@ -34,9 +34,7 @@ class OnlineTrainer(Trainer):
 				self.logger.video.init(self.env, enabled=True)
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
-				action = self.agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
-				with torch.no_grad():
-					_, hidden = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=hidden)
+				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
 				obs, reward, done, info = self.env.step(action)
 				ep_reward += reward
 				t += 1
@@ -73,7 +71,7 @@ class OnlineTrainer(Trainer):
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			h=h,
-			is_first=torch.ones((1, 1), dtype=torch.bool) if is_first else torch.zeros((1, 1), dtype=torch.bool),
+			is_first=torch.ones((1, 1), dtype=torch.float) if is_first else torch.zeros((1, 1), dtype=torch.float),
 		batch_size=(1,))
 		return td
 
@@ -85,6 +83,7 @@ class OnlineTrainer(Trainer):
 		reset_success_count = False
 		log_success_rate = False
 		h = self.agent.initial_h.detach()
+		h_next = h
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
@@ -131,11 +130,9 @@ class OnlineTrainer(Trainer):
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
-				action = self.agent.act(obs, t0=len(self._tds)==1, h=h)
+				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h)
 			else:
 				action = self.env.rand_act()
-			with torch.no_grad():
-				_, h_next = self.agent.model.forward(obs.cuda().unsqueeze(0), action.cuda().unsqueeze(0), h=h)
 			obs, reward, done, info = self.env.step(action)
 			self._tds.append(self.to_td(obs, action, reward, h, is_first=False))
 			h = h_next
