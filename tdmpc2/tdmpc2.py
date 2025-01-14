@@ -22,7 +22,7 @@ class TDMPC2(torch.nn.Module):
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
 		if self.cfg.compile:
-			self.model = torch.compile(self.model)
+			self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
@@ -43,7 +43,7 @@ class TDMPC2(torch.nn.Module):
 		self._first_update = True
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
-			self._update = torch.compile(self._update, mode="reduce-overhead")
+			self._update = torch.compile(self._update)
 			self._burn_in_rollout = torch.compile(self._burn_in_rollout, mode="reduce-overhead")
 
 	@property
@@ -118,7 +118,7 @@ class TDMPC2(torch.nn.Module):
 		if self.cfg.mpc:
 			z = self.model.encode(obs, task)
 			a = self.plan(z, t0=t0, h=h, eval_mode=eval_mode, task=task)
-			_, h = self.model.rnn(z, a.unsqueeze(0).detach(), task, h)
+			_, h = self.model.rnn(z, a.unsqueeze(0), task, h)
 		else:
 			z = self.model.encode(obs, task)
 			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
@@ -163,8 +163,6 @@ class TDMPC2(torch.nn.Module):
 			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
 
 		# Initialize state and parameters
-		h_orig = h.clone()
-		z_orig = z.clone()
 		z = z.repeat(self.cfg.num_samples, 1)
 		h = h.repeat(self.cfg.num_samples, 1) if h is not None else None
 		mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
@@ -286,7 +284,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, obs, action, reward, hidden, is_first, task=None):
+	def _update(self, prev_obs, prev_action, obs, action, reward, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -388,11 +386,11 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, hidden, is_first, task = buffer.sample()
+		obs, action, reward, is_first, task = buffer.sample()
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward[self.cfg.burn_in:], hidden[self.cfg.burn_in:], is_first[self.cfg.burn_in:], **kwargs)
+		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, is_first, **kwargs)
 

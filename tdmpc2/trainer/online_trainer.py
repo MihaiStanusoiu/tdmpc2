@@ -64,13 +64,10 @@ class OnlineTrainer(Trainer):
 			action = torch.full_like(self.env.rand_act(), float('nan'))
 		if reward is None:
 			reward = torch.tensor(float('nan'))
-		if h is None:
-			h = self.agent.initial_h.detach()
 		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
-			h=h,
 			is_first=torch.ones((1, 1), dtype=torch.float) if is_first else torch.zeros((1, 1), dtype=torch.float),
 		batch_size=(1,))
 		return td

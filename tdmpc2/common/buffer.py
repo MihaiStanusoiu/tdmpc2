@@ -73,13 +73,13 @@ class Buffer():
 		td = td.select("obs", "action", "reward", "h", "next_h", "is_first", "task", strict=False).to(self._device, non_blocking=True)
 		obs = td.get('obs').contiguous()
 		action = td.get('action')[1:].contiguous()
-		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
-		h = td['h'].contiguous()
-		is_first = td['is_first'].contiguous()
+		reward = td.get('reward')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
+		# h = td['h'].contiguous()
+		is_first = td['is_first'][self.cfg.burn_in:].contiguous()
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
-		return obs, action, reward, h, is_first, task
+		return obs, action, reward, is_first, task
 
 	def add(self, td):
 		"""Add an episode to the buffer."""
