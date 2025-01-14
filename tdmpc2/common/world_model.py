@@ -26,14 +26,16 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, return_sequences=False)
-		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+		# self._feat_extr = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [cfg.mlp_dim], cfg.embed_dim)
+		self._feat_extr = nn.Linear(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.embed_dim)
+		self._dynamics = layers.mlp(cfg.embed_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		self._rnn.batch_first = False
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
+		self._reward = layers.mlp(cfg.embed_dim + cfg.hidden_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
 		self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		self._Qs = layers.Ensemble([layers.mlp(cfg.embed_dim + cfg.hidden_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
 
@@ -123,31 +125,34 @@ class WorldModel(nn.Module):
 		readout, h = self._rnn(z, h)
 		return readout, h
 
-	def next(self, z, a, h, task):
+	def next(self, embed, h):
 		"""
 		Predicts the next latent state given the current latent state and action.
 		"""
+		feat = torch.cat([embed, h], dim=-1)
+		z_next = self._dynamics(feat)
+		return z_next
+
+	def embed(self, z, a, task):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a, h], dim=-1)
-		z_next = self._dynamics(z)
-		return z_next
+		return nn.ReLU()(self._feat_extr(torch.cat([z, a], dim=-1)))
 
 	def forward(self, z, a, h, task):
 		"""
 		Forward pass through the world model.
 		"""
+
 		_, h = self.rnn(z, a, task, h)
-		z_next = self.next(z, a, h, task)
+		embed = self.embed(z, a, task)
+		z_next = self.next(embed, h)
 		return z_next, h
 	
-	def reward(self, z, a, h, task):
+	def reward(self, embed, h):
 		"""
 		Predicts instantaneous (single-step) reward.
 		"""
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-		z = torch.cat([z, a, h], dim=-1)
+		z = torch.cat([embed, h], dim=-1)
 		return self._reward(z)
 
 	def pi(self, z, h, task):
@@ -180,7 +185,7 @@ class WorldModel(nn.Module):
 
 		return mu, pi, log_pi, log_std
 
-	def Q(self, z, a, h, task, return_type='min', target=False, detach=False):
+	def Q(self, embed, h, return_type='min', target=False, detach=False):
 		"""
 		Predict state-action value.
 		`return_type` can be one of [`min`, `avg`, `all`]:
@@ -191,10 +196,7 @@ class WorldModel(nn.Module):
 		"""
 		assert return_type in {'min', 'avg', 'all'}
 
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-
-		z = torch.cat([z, a, h], dim=-1)
+		z = torch.cat([embed, h], dim=-1)
 		if target:
 			qnet = self._target_Qs
 		elif detach:

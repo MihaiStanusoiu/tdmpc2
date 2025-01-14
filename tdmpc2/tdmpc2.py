@@ -25,6 +25,7 @@ class TDMPC2(torch.nn.Module):
 			self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
+			{'params': self.model._feat_extr.parameters()},
 			{'params': self.model._rnn.parameters()},
 			{'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
@@ -129,12 +130,14 @@ class TDMPC2(torch.nn.Module):
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		for t in range(self.cfg.horizon):
-			reward = math.two_hot_inv(self.model.reward(z, actions[t], h, task), self.cfg)
+			embed = self.model.embed(z, actions[t], task)
+			reward = math.two_hot_inv(self.model.reward(embed, h), self.cfg)
 			z, h = self.model.forward(z, actions[t], task, h)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
-		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], h, task, return_type='avg')
+		embed = self.model.embed(z, self.model.pi(z, h, task)[1], task)
+		return G + discount * self.model.Q(embed, h, return_type='avg')
 
 	@torch.no_grad()
 	def _plan(self, z, t0=False, h=None, eval_mode=False, task=None):
@@ -221,7 +224,8 @@ class TDMPC2(torch.nn.Module):
 			float: Loss of the policy update.
 		"""
 		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
-		qs = self.model.Q(zs, pis, hs, task, return_type='avg', detach=True)
+		embeds = self.model.embed(zs, pis, task)
+		qs = self.model.Q(embeds, hs, return_type='avg', detach=True)
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
 
@@ -250,7 +254,8 @@ class TDMPC2(torch.nn.Module):
 		"""
 		pi = self.model.pi(next_z, h, task)[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
-		return reward + discount * self.model.Q(next_z, pi, h, task, return_type='min', target=True)
+		embeds = self.model.embed(next_z, pi, task)
+		return reward + discount * self.model.Q(embeds, h, return_type='min', target=True)
 
 	@staticmethod
 	def _mask(value, mask):
@@ -309,6 +314,7 @@ class TDMPC2(torch.nn.Module):
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
+		embeds = torch.empty(self.cfg.horizon, self.cfg.batch_size, self.cfg.embed_dim, device=self.device)
 
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
@@ -317,16 +323,21 @@ class TDMPC2(torch.nn.Module):
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
 			ht = ht + self._mask(self.initial_h.detach(), _is_first.float())
-			z, h = self.model.forward(z, _action, task, hs[t])
+			embed = self.model.embed(z, _action, task)
+			_, h = self.model.rnn(z, _action, task, ht)
+			feat = torch.cat([embed, h], dim=-1)
+			z = self.model._dynamics(feat)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
 			hs[t+1] = h
+			embeds[t] = embed
 
 		# Predictions
 		_zs = zs[:-1]
 		_hs = hs[:-1]
-		qs = self.model.Q(_zs, action, _hs, task, return_type='all')
-		reward_preds = self.model.reward(_zs, action, _hs, task)
+		# Embedding inputs
+		qs = self.model.Q(embeds, _hs, return_type='all')
+		reward_preds = self.model.reward(embeds, _hs)
 
 		# Compute targets
 		with torch.no_grad():

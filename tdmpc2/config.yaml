@@ -75,6 +75,7 @@ num_channels: 32
 mlp_dim: 512
 latent_dim: 512
 hidden_dim: 512
+embed_dim: 512
 task_dim: 96
 num_q: 5
 dropout: 0.01

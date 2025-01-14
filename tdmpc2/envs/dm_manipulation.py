@@ -1,10 +1,14 @@
 import numpy as np
 from dm_control import manipulation
 from dm_control.composer.variation import noises, distributions
+from dm_control.suite.wrappers import action_scale
 
 from envs.dmcontrol import ActionDTypeWrapper
 
 from envs.dmcontrol import TimeStepToGymWrapper
+
+from envs.dmcontrol import ActionRepeatWrapper, ExtendedTimeStepWrapper
+
 
 def make_env(cfg):
     env = manipulation.load(cfg.task, seed=cfg.seed)
@@ -25,6 +29,9 @@ def make_env(cfg):
 if __name__ == "__main__":
     env = manipulation.load('place_brick_features', seed=0)
     env = ActionDTypeWrapper(env, np.float32)
+    env = ActionRepeatWrapper(env, 2)
+    env = action_scale.Wrapper(env, minimum=-1., maximum=1.)
+    env = ExtendedTimeStepWrapper(env)
     env = TimeStepToGymWrapper(env, '', 'place_brick_features')
     env.render()
     ok= True
