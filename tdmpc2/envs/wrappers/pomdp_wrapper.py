@@ -2,9 +2,10 @@ import numpy as np
 import gym
 
 from envs.wrappers.mujoco_wrapper import MujocoWrapper
+from gym import Wrapper
 
 
-class POMDPWrapper(gym.ObservationWrapper):
+class POMDPWrapper(Wrapper):
     def __init__(self, env, env_name, cfg):
         """
 
@@ -54,6 +55,15 @@ class POMDPWrapper(gym.ObservationWrapper):
             pass
         elif self.pomdp_type == 'random_sensor_missing_and_random_noise':
             pass
+
+    def reset(self, **kwargs):
+        """Resets the environment, returning a modified observation using :meth:`self.observation`."""
+        obs = self.env.reset(**kwargs)
+        return self.observation(obs)
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        return self.observation(obs), reward, done, info
 
     def observation(self, obs):
         # Single source of POMDP
