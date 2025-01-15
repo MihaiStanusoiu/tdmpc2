@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import numpy as np
 import gym
 
@@ -59,13 +61,15 @@ class POMDPWrapper(Wrapper):
     def reset(self, **kwargs):
         """Resets the environment, returning a modified observation using :meth:`self.observation`."""
         obs = self.env.reset(**kwargs)
-        return self.observation(obs)
+        obs, _ = self.observation(obs)
+        return obs
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
-        return self.observation(obs), reward, done, info
+        obs, info = self.observation(obs, info)
+        return obs, reward, done, info
 
-    def observation(self, obs, info):
+    def observation(self, obs, info={}):
         # Single source of POMDP
         if self.pomdp_type == 'remove_velocity':
             return obs.flatten()[self.remain_obs_idx], info

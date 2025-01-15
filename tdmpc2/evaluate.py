@@ -77,10 +77,7 @@ def evaluate(cfg: dict):
 			if cfg.save_video:
 				frames = [env.render()]
 			while not done:
-				if self.cfg.random_policy:
-					action = env.rand_act()
-				else:
-					action, hidden = agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
+				action, hidden = agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
 				obs, reward, done, info = env.step(action)
 				ep_reward += reward
 				t += 1
