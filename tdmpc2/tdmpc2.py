@@ -24,6 +24,7 @@ class TDMPC2(torch.nn.Module):
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
 		if self.cfg.compile:
+			self.uncompiled_model = self.model
 			self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
@@ -34,7 +35,8 @@ class TDMPC2(torch.nn.Module):
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': self.model.initial_h if self.cfg.learned_init_h else []},
 		], lr=self.cfg.lr, capturable=True)
-		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
+		if not self.cfg.freeze_pi:
+			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
 		self.model.eval()
 		self.scale = RunningScale(cfg)
 		self.cfg.iterations += 2*int(cfg.action_dim >= 20) # Heuristic for large action spaces
@@ -75,16 +77,21 @@ class TDMPC2(torch.nn.Module):
 		frac = episode_length/self.cfg.discount_denom
 		return min(max((frac-1)/(frac), self.cfg.discount_min), self.cfg.discount_max)
 
-	def save(self, fp):
+	def save(self, fp, metrics):
 		"""
 		Save state dict of the agent to filepath.
 
 		Args:
 			fp (str): Filepath to save state dict to.
 		"""
-		torch.save({"model": self.model.state_dict()}, fp)
+		torch.save({
+			"model": self.uncompiled_model.state_dict(),
+			"wm_optim": self.optim.state_dict(),
+			"pi_optim": self.pi_optim.state_dict(),
+			"metrics": metrics,
+		}, fp)
 
-	def load(self, fp):
+	def load(self, fp, load_pi_only=False):
 		"""
 		Load a saved state dict from filepath (or dictionary) into current agent.
 
@@ -92,6 +99,7 @@ class TDMPC2(torch.nn.Module):
 			fp (str or dict): Filepath or state dict to load.
 		"""
 		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device())
+
 		state_dict = state_dict["model"] if "model" in state_dict else state_dict
 		def load_sd_hook(model, local_state_dict, prefix, *args):
 			name_map = [
@@ -124,9 +132,38 @@ class TDMPC2(torch.nn.Module):
 						new_sd[new_total_key] = val
 			local_state_dict.update(new_sd)
 			return local_state_dict
+		if load_pi_only:
+			encoder_state_dict = state_dict.copy()
+			for k, v in list(state_dict.items()):
+				if k.startswith("_pi"):
+					state_dict[k.split('_pi.')[1]] = v
+				del state_dict[k]
+			pi = self.model._pi
+			pi.load_state_dict(state_dict)
+			for param in pi:
+				param.requires_grad = False
+			for k, v in list(encoder_state_dict.items()):
+				if k.startswith("_encoder"):
+					encoder_state_dict[k.split('_encoder.')[1]] = v
+				del encoder_state_dict[k]
+			encoder = self.model._encoder
+			encoder.load_state_dict(encoder_state_dict)
+			for param in encoder['state']:
+				param.requires_grad = False
+			return
 		load_sd_hook(self.model, state_dict, "_Qs.")
 		assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
 		self.model.load_state_dict(state_dict)
+		# load optimizer state
+		optim_fp = os.path.splitext(fp)[0] + "_optim.pth"
+		if os.path.exists(optim_fp):
+			self.optim.load_state_dict(torch.load(optim_fp))
+		if not self.cfg.freeze_pi:
+			pi_optim_fp = os.path.splitext(fp)[0] + "_pi_optim.pth"
+			if os.path.exists(pi_optim_fp):
+				self.pi_optim.load_state_dict(torch.load(pi_optim_fp))
+
+		self.loss = state_dict["metrics"]
 		return
 
 	@property
@@ -393,8 +430,9 @@ class TDMPC2(torch.nn.Module):
 		self.optim.step()
 		self.optim.zero_grad(set_to_none=True)
 
-		# Update policy
-		pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs.detach(), task)
+		if not self.cfg.freeze_pi:
+			# Update policy
+			pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs.detach(), task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
@@ -402,16 +440,21 @@ class TDMPC2(torch.nn.Module):
 		# Return training statistics
 		self.model.eval()
 		self._first_update = False
-		return TensorDict({
+		info_dict = {
 			"consistency_loss": consistency_loss,
 			"reward_loss": reward_loss,
 			"value_loss": value_loss,
-			"pi_loss": pi_loss,
+			# "pi_loss": pi_loss,
 			"total_loss": total_loss,
 			"grad_norm": grad_norm,
-			"pi_grad_norm": pi_grad_norm,
+			# "pi_grad_norm": pi_grad_norm,
 			"pi_scale": self.scale.value,
-		}).detach().mean()
+		}
+		if not self.cfg.freeze_pi:
+			info_dict["pi_loss"] = pi_loss
+			info_dict["pi_grad_norm"] = pi_grad_norm
+		self.loss = info_dict
+		return TensorDict(self.loss).detach().mean()
 
 	def update(self, buffer):
 		"""

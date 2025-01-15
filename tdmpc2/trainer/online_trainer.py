@@ -3,6 +3,8 @@ from time import time
 import numpy as np
 import torch
 from tensordict.tensordict import TensorDict
+from termcolor import colored
+
 from trainer.base import Trainer
 
 
@@ -72,9 +74,29 @@ class OnlineTrainer(Trainer):
 		batch_size=(1,))
 		return td
 
+	def save(self, metrics):
+		self.logger.save_agent(self.agent, self.buffer, metrics, identifier=f'{self._step}')
+
+	def load(self):
+		"""Load a TD-MPC2 agent."""
+		artifact = self.logger._wandb.use_artifact(self.cfg.checkpoint + ':v0', type='model')
+		artifact_dir = artifact.download()
+		self.agent.load(artifact_dir, load_pi_only=self.cfg.freeze_pi)
+		buffer_artifact = self.logger._wandb.use_artifact(self.logger._group + '-' + str(self.logger._seed) + '-buffer', type='dataset')
+		buffer_artifact_dir = buffer_artifact.download()
+		# TODO: Load buffer
+
+		self._step = self.agent.loss['step']
+		return self.agent.loss
+
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done, eval_next = {}, True, False
+
+		if self.cfg.checkpoint != '???':
+			train_metrics = self.load()
+			print(colored(f'Loaded agent from {self.cfg.checkpoint}', 'green', attrs=['bold']))
+
 		success_count = 0
 		ep_count = 0
 		reset_success_count = False
@@ -94,7 +116,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
 					identifier = f'{self._step}' if not self.cfg.override else 'final'
-					self.logger.save_agent(self.agent, None, identifier=f'{self._step}')
+					self.save(train_metrics)
 					eval_next = False
 					reset_success_count = True
 

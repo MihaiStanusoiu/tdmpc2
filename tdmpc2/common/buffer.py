@@ -91,7 +91,11 @@ class Buffer():
 		return self._num_eps
 
 	def dumps(self, path):
-		self._buffer.dumps(path)
+		try:
+			self._buffer.dumps(path)
+			return True
+		except Exception as e:
+			return False
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
