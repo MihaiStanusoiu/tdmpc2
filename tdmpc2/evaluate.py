@@ -1,5 +1,5 @@
 import os
-os.environ['MUJOCO_GL'] = 'egl'
+os.environ['MUJOCO_GL'] = 'glfw'
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -52,6 +52,29 @@ def evaluate(cfg: dict):
 
 	# Make environment
 	env = make_env(cfg)
+
+	# initialize wandb
+	project = cfg.get("wandb_project", "none")
+	entity = cfg.get("wandb_entity", "none")
+	if not cfg.enable_wandb or project == "none" or entity == "none":
+		print(colored("Wandb disabled.", "blue", attrs=["bold"]))
+		cfg.save_agent = False
+		cfg.save_video = False
+		_wandb = None
+		_video = None
+	else:
+		os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"
+		import wandb
+	wandb.login(key="0b961bb8b95bbca48519a84eeca715dc4187268f")
+	wandb.init(
+		project=self.project,
+		entity=self.entity,
+		name=str(cfg.exp_name),
+		group=self._group,
+		tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
+		dir=self._log_dir,
+		config=dataclasses.asdict(cfg),
+	)
 
 	# Load agent
 	agent = TDMPC2(cfg)

@@ -4,6 +4,7 @@ defaults:
 # environment
 task: dog-run
 obs: state
+sensor_noise: 0.0
 pomdp_type: None
 flicker_prob: 0.2
 random_noise_sigma: 0.1
@@ -21,6 +22,7 @@ eval_freq: 5000
 use_tensorboard: True
 
 # training
+freeze_pi: false
 steps: 10_000_000
 batch_size: 256
 reward_coef: 0.1
@@ -89,7 +91,7 @@ save_csv: true
 # misc
 save_video: true
 save_agent: true
-save_buffer: true
+save_buffer: false
 override: true
 seed: 1
 

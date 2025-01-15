@@ -59,28 +59,34 @@ class POMDPWrapper(Wrapper):
     def reset(self, **kwargs):
         """Resets the environment, returning a modified observation using :meth:`self.observation`."""
         obs = self.env.reset(**kwargs)
-        return self.observation(obs)
+        obs, _ = self.observation(obs)
+        return obs
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
-        return self.observation(obs), reward, done, info
+        obs, info = self.observation(obs, info)
+        return obs, reward, done, info
 
-    def observation(self, obs):
+    def observation(self, obs, info={}):
         # Single source of POMDP
         if self.pomdp_type == 'remove_velocity':
-            return obs.flatten()[self.remain_obs_idx]
+            return obs.flatten()[self.remain_obs_idx], info
         elif self.pomdp_type == 'flickering':
             # Note: flickering is equivalent to:
             #   flickering_and_random_sensor_missing, random_noise_and_flickering, random_sensor_missing_and_flickering
             if np.random.rand() <= self.flicker_prob:
-                return np.zeros(obs.shape)
+                obs = np.zeros(obs.shape)
+                delay = info.get('delay', 0)
+                delay += 1
+                info['delay'] = delay
+                return obs, info
             else:
-                return obs.flatten()
+                return obs.flatten(), info
         elif self.pomdp_type == 'random_noise':
-            return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
+            return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten(), info
         elif self.pomdp_type == 'random_sensor_missing':
             obs[np.random.rand(len(obs)) <= self.random_sensor_missing_prob] = 0
-            return obs.flatten()
+            return obs.flatten(), info
         # Multiple source of POMDP
         elif self.pomdp_type == 'remove_velocity_and_flickering':
             # Note: remove_velocity_and_flickering is equivalent to flickering_and_remove_velocity
@@ -88,26 +94,33 @@ class POMDPWrapper(Wrapper):
             new_obs = obs.flatten()[self.remain_obs_idx]
             # Flickering
             if np.random.rand() <= self.flicker_prob:
-                return np.zeros(new_obs.shape)
+                obs = np.zeros(new_obs.shape)
+                delay = info.get('delay', 0)
+                delay += 1
+                info['delay'] = delay
+                return obs, info
             else:
-                return new_obs
+                return new_obs, info
         elif self.pomdp_type == 'remove_velocity_and_random_noise':
             # Note: remove_velocity_and_random_noise is equivalent to random_noise_and_remove_velocity
             # Remove velocity
             new_obs = obs.flatten()[self.remain_obs_idx]
             # Add random noise
-            return (new_obs + np.random.normal(0, self.random_noise_sigma, new_obs.shape)).flatten()
+            return (new_obs + np.random.normal(0, self.random_noise_sigma, new_obs.shape)).flatten(), info
         elif self.pomdp_type == 'remove_velocity_and_random_sensor_missing':
             # Note: remove_velocity_and_random_sensor_missing is equivalent to random_sensor_missing_and_remove_velocity
             # Remove velocity
             new_obs = obs.flatten()[self.remain_obs_idx]
             # Random sensor missing
             new_obs[np.random.rand(len(new_obs)) <= self.random_sensor_missing_prob] = 0
-            return new_obs
+            return new_obs, info
         elif self.pomdp_type == 'flickering_and_random_noise':
             # Flickering
             if np.random.rand() <= self.flicker_prob:
                 new_obs = np.zeros(obs.shape)
+                delay = info.get('delay', 0)
+                delay += 1
+                info['delay'] = delay
             else:
                 new_obs = obs
             # Add random noise
@@ -117,14 +130,14 @@ class POMDPWrapper(Wrapper):
             new_obs = (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
             # Random sensor missing
             new_obs[np.random.rand(len(new_obs)) <= self.random_sensor_missing_prob] = 0
-            return new_obs
+            return new_obs, info
         elif self.pomdp_type == 'random_sensor_missing_and_random_noise':
             # Random sensor missing
             obs[np.random.rand(len(obs)) <= self.random_sensor_missing_prob] = 0
             # Random noise
-            return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
+            return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten(), info
         else:
-            return obs
+            return obs, info
 
     def _remove_velocity(self, env_name):
         # OpenAIGym

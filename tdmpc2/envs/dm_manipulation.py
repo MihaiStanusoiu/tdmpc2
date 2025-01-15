@@ -32,8 +32,6 @@ def make_env(cfg):
 if __name__ == "__main__":
     env = manipulation.load('place_brick_features', seed=0)
     env = ActionDTypeWrapper(env, np.float32)
-    env = ActionRepeatWrapper(env, 2)
-    env = action_scale.Wrapper(env, minimum=-1., maximum=1.)
-    env = ExtendedTimeStepWrapper(env)
-    env = TimeStepToGymWrapper(env, domain, task)
+    env = TimeStepToGymWrapper(env, '', 'place_brick_features')
+    env.render()
     ok= True
