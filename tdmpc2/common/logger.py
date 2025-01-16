@@ -129,6 +129,7 @@ class Logger:
         self._save_buffer = cfg.save_buffer
         self._group = cfg_to_group(cfg)
         self._seed = cfg.seed
+        self._checkpoint = cfg.checkpoint
         self._eval = []
         self._use_tensorboard = cfg.get("use_tensorboard", False)
         print_run(cfg)
@@ -147,7 +148,9 @@ class Logger:
         wandb.init(
 			project=self.project,
 			entity=self.entity,
+            id=str(cfg.exp_name),
 			name=str(cfg.exp_name),
+            resume='allow',
 			group=self._group,
 			tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
 			dir=self._log_dir,
@@ -174,6 +177,15 @@ class Logger:
     @property
     def model_dir(self):
         return self._model_dir
+
+    def load_agent(self):
+        identifier = str(self._checkpoint)
+        fp = f'{str(identifier)}.pt'
+        artifact = self._wandb.use_artifact(
+            self._group + '-' + str(self._seed) + '-' + str(identifier) + ':v0', type='model'
+        )
+        artifact_dir = artifact.download()
+        return os.path.join(artifact_dir, fp)
 
     def save_agent(self, agent=None, buffer=None, metrics={}, identifier='final'):
         if self._save_agent and agent:

@@ -100,6 +100,7 @@ class TDMPC2(torch.nn.Module):
 		"""
 		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device())
 
+		self.loss = state_dict["metrics"]
 		state_dict = state_dict["model"] if "model" in state_dict else state_dict
 		def load_sd_hook(model, local_state_dict, prefix, *args):
 			name_map = [
@@ -120,7 +121,7 @@ class TDMPC2(torch.nn.Module):
 				for key, val in list(local_state_dict.items()):
 					if not key.startswith(cur_prefix[:-1]):
 						continue
-					num = key[len(cur_prefix + "params."):]
+					num = key[len(cur_prefix + "params."):len(cur_prefix + "params.")+1]
 					new_key = str(int(num) // 4) + "." + name_map[int(num) % 4]
 					new_total_key = cur_prefix + 'params.' + new_key
 					print("\t", key, '-->', new_total_key)
@@ -151,9 +152,10 @@ class TDMPC2(torch.nn.Module):
 			for param in encoder['state']:
 				param.requires_grad = False
 			return
-		load_sd_hook(self.model, state_dict, "_Qs.")
-		assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
-		self.model.load_state_dict(state_dict)
+		# load_sd_hook(self.model, state_dict, "_Qs.")
+		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
+		self.uncompiled_model.load_state_dict(state_dict)
+		self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
 		# load optimizer state
 		optim_fp = os.path.splitext(fp)[0] + "_optim.pth"
 		if os.path.exists(optim_fp):
@@ -163,7 +165,6 @@ class TDMPC2(torch.nn.Module):
 			if os.path.exists(pi_optim_fp):
 				self.pi_optim.load_state_dict(torch.load(pi_optim_fp))
 
-		self.loss = state_dict["metrics"]
 		return
 
 	@property

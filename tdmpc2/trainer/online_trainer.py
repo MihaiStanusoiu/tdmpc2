@@ -16,6 +16,7 @@ class OnlineTrainer(Trainer):
 		self._step = 0
 		self._ep_idx = 0
 		self._start_time = time()
+		self._tds = []
 
 	def common_metrics(self):
 		"""Return a dictionary of current metrics."""
@@ -79,11 +80,10 @@ class OnlineTrainer(Trainer):
 
 	def load(self):
 		"""Load a TD-MPC2 agent."""
-		artifact = self.logger._wandb.use_artifact(self.cfg.checkpoint + ':v0', type='model')
-		artifact_dir = artifact.download()
-		self.agent.load(artifact_dir, load_pi_only=self.cfg.freeze_pi)
-		buffer_artifact = self.logger._wandb.use_artifact(self.logger._group + '-' + str(self.logger._seed) + '-buffer', type='dataset')
-		buffer_artifact_dir = buffer_artifact.download()
+		fp = self.logger.load_agent()
+		self.agent.load(fp, load_pi_only=self.cfg.freeze_pi)
+		# buffer_artifact = self.logger._wandb.use_artifact(self.logger._group + '-' + str(self.logger._seed) + '-buffer', type='dataset')
+		# buffer_artifact_dir = buffer_artifact.download()
 		# TODO: Load buffer
 
 		self._step = self.agent.loss['step']
@@ -91,7 +91,7 @@ class OnlineTrainer(Trainer):
 
 	def train(self):
 		"""Train a TD-MPC2 agent."""
-		train_metrics, done, eval_next = {}, True, False
+		train_metrics, done, eval_next, info = {}, True, False, {}
 
 		if self.cfg.checkpoint != '???':
 			train_metrics = self.load()
@@ -123,11 +123,12 @@ class OnlineTrainer(Trainer):
 				if self._step > 0:
 					# if info.has_key('success'):
 					log_success_rate = True
-					if info['success']:
+					success = info.get('success') or False
+					if success:
 						success_count += 1
 					train_metrics.update(
 						episode_reward=torch.tensor([td['reward'] for td in self._tds[1:]]).sum(),
-						episode_success=info['success'],
+						episode_success=success,
 					)
 					if log_success_rate:
 						train_metrics.update(success_rate=success_count / ep_count * 100)
@@ -140,7 +141,8 @@ class OnlineTrainer(Trainer):
 						success_count = 0
 						reset_success_count = False
 
-					self._ep_idx = self.buffer.add(torch.cat(self._tds))
+					if len(self._tds) > 0:
+						self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
 				is_first = True
