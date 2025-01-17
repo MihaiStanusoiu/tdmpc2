@@ -1,5 +1,8 @@
 import os
-os.environ['MUJOCO_GL'] = 'glfw'
+
+from common.logger import Logger
+
+os.environ['MUJOCO_GL'] = 'egl'
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -46,49 +49,28 @@ def evaluate(cfg: dict):
 	print(colored(f'Task: {cfg.task}', 'blue', attrs=['bold']))
 	print(colored(f'Model size: {cfg.get("model_size", "default")}', 'blue', attrs=['bold']))
 	print(colored(f'Checkpoint: {cfg.checkpoint}', 'blue', attrs=['bold']))
-	if not cfg.multitask and ('mt80' in cfg.checkpoint or 'mt30' in cfg.checkpoint):
-		print(colored('Warning: single-task evaluation of multi-task models is not currently supported.', 'red', attrs=['bold']))
-		print(colored('To evaluate a multi-task model, use task=mt80 or task=mt30.', 'red', attrs=['bold']))
 
 	# Make environment
 	env = make_env(cfg)
 
-	# initialize wandb
-	project = cfg.get("wandb_project", "none")
-	entity = cfg.get("wandb_entity", "none")
-	if not cfg.enable_wandb or project == "none" or entity == "none":
-		print(colored("Wandb disabled.", "blue", attrs=["bold"]))
-		cfg.save_agent = False
-		cfg.save_video = False
-		_wandb = None
-		_video = None
-	else:
-		os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"
-		import wandb
-	wandb.login(key="0b961bb8b95bbca48519a84eeca715dc4187268f")
-	wandb.init(
-		project=self.project,
-		entity=self.entity,
-		name=str(cfg.exp_name),
-		group=self._group,
-		tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
-		dir=self._log_dir,
-		config=dataclasses.asdict(cfg),
-	)
+	# initialize logger
+	logger = Logger(cfg)
 
 	# Load agent
 	agent = TDMPC2(cfg)
-	assert os.path.exists(cfg.checkpoint), f'Checkpoint {cfg.checkpoint} not found! Must be a valid filepath.'
-	agent.load(cfg.checkpoint)
-	
+
+	fp = logger.load_agent()
+	agent.load(fp)
+
 	# Evaluate
 	if cfg.multitask:
 		print(colored(f'Evaluating agent on {len(cfg.tasks)} tasks:', 'yellow', attrs=['bold']))
 	else:
 		print(colored(f'Evaluating agent on {cfg.task}:', 'yellow', attrs=['bold']))
-	if cfg.save_video:
-		video_dir = os.path.join(cfg.work_dir, 'videos')
-		os.makedirs(video_dir, exist_ok=True)
+	# if cfg.save_video:
+	# 	video_dir = os.path.join(cfg.work_dir, 'videos')
+	# 	os.makedirs(video_dir, exist_ok=True)
+
 	scores = []
 	tasks = cfg.tasks if cfg.multitask else [cfg.task]
 	for task_idx, task in enumerate(tasks):
@@ -98,21 +80,32 @@ def evaluate(cfg: dict):
 		for i in range(cfg.eval_episodes):
 			obs, done, ep_reward, t, hidden = env.reset(task_idx=task_idx), False, 0, 0, agent.initial_h.detach()
 			if cfg.save_video:
-				frames = [env.render()]
+				logger.video.init(env, enabled=True)
 			while not done:
 				action, hidden = agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
 				obs, reward, done, info = env.step(action)
 				ep_reward += reward
 				t += 1
 				if cfg.save_video:
-					frames.append(env.render())
+					logger.video.record(env)
 			ep_rewards.append(ep_reward)
 			ep_successes.append(info['success'])
+			metrics = dict(
+				episode=i,
+				episode_reward=ep_reward,
+				episode_success=info['success'],
+			)
+			logger.log(metrics, "evaluate_ep")
 			if cfg.save_video:
-				imageio.mimsave(
-					os.path.join(video_dir, f'{task}-{i}.mp4'), frames, fps=15)
+				logger.video.save(i, key=f"evaluate/videos/{task}")
 		ep_rewards = np.mean(ep_rewards)
 		ep_successes = np.mean(ep_successes)
+		metrics = dict(
+			task=task_idx,
+			episode_reward=ep_rewards,
+			episode_success=ep_successes,
+		)
+		logger.log(metrics, "evaluate_task")
 		if cfg.multitask:
 			scores.append(ep_successes*100 if task.startswith('mw-') else ep_rewards/10)
 		print(colored(f'  {task:<22}' \

@@ -24,6 +24,8 @@ CAT_TO_COLOR = {
 	"pretrain": "yellow",
 	"train": "blue",
 	"eval": "green",
+    "evaluate_ep": "green",
+    "evaluate_task": "green",
 }
 
 
@@ -148,7 +150,7 @@ class Logger:
         wandb.init(
 			project=self.project,
 			entity=self.entity,
-            id=str(cfg.exp_name),
+            # id=str(cfg.exp_name),
 			name=str(cfg.exp_name),
             resume='allow' if cfg.checkpoint != '???' else None,
 			group=self._group,
@@ -277,6 +279,10 @@ class Logger:
                 xkey = "step"
             elif category == "pretrain":
                 xkey = "iteration"
+            elif category == "evaluate_ep":
+                xkey = "episode"
+            elif category == "evaluate_task":
+                xkey = "task"
             _d = dict()
             for k, v in d.items():
                 _d[category + "/" + k] = v
