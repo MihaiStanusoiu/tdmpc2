@@ -124,6 +124,7 @@ class POMDPWrapper(Wrapper):
                 delay += 1
                 info['delay'] = delay
             else:
+                info['delay'] = 0
                 new_obs = obs
             # Add random noise
             return (new_obs + np.random.normal(0, self.random_noise_sigma, new_obs.shape)).flatten()

@@ -112,7 +112,7 @@ class WorldModel(nn.Module):
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
 		return self._encoder[self.cfg.obs](obs)
 
-	def rnn(self, z, a, task=None, h=None):
+	def rnn(self, z, a, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 		z = torch.cat([z, a], dim=-1)
@@ -120,7 +120,9 @@ class WorldModel(nn.Module):
 			z = z.unsqueeze(0)
 		if h is None:
 			h = self.initial_h.expand(z.shape[1], -1)
-		readout, h = self._rnn(z, h)
+		if dt is None:
+			dt = torch.ones((1, 1), device=h.device, requires_grad=False)
+		readout, h = self._rnn(z, h, dt)
 		return readout, h
 
 	def next(self, z, a, h, task=None):
@@ -133,11 +135,11 @@ class WorldModel(nn.Module):
 		z_next = self._dynamics(z)
 		return z_next
 
-	def forward(self, z, a, h, task=None):
+	def forward(self, z, a, h, task=None, dt=None):
 		"""
 		Forward pass through the world model.
 		"""
-		_, h = self.rnn(z, a, task, h)
+		_, h = self.rnn(z, a, task, h, dt=dt)
 		z_next = self.next(z, a, h, task)
 		return z_next, h
 	

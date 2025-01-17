@@ -23,8 +23,8 @@ class TDMPC2(torch.nn.Module):
 		self.cfg = cfg
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
+		self.uncompiled_model = self.model
 		if self.cfg.compile:
-			self.uncompiled_model = self.model
 			self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
@@ -174,7 +174,7 @@ class TDMPC2(torch.nn.Module):
 		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
 	@torch.no_grad()
-	def act(self, obs, t0=False, h=None, eval_mode=False, task=None):
+	def act(self, obs, t0=False, h=None, dt=1.0, eval_mode=False, task=None):
 		"""
 		Select an action by planning in the latent space of the world model.
 
@@ -192,8 +192,10 @@ class TDMPC2(torch.nn.Module):
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
 			z = self.model.encode(obs, task)
-			a = self.plan(z, t0=t0, h=h, eval_mode=eval_mode, task=task)
-			_, h = self.model.rnn(z, a.unsqueeze(0), task, h)
+			tensor_dt = torch.tensor([dt], dtype=torch.float, device=self.device, requires_grad=False).unsqueeze(0)
+			torch.compiler.cudagraph_mark_step_begin()
+			a = self.plan(z, t0=t0, h=h, dt=tensor_dt, eval_mode=eval_mode, task=task)
+			_, h = self.model.rnn(z, a.unsqueeze(0), task, h, dt=tensor_dt)
 		else:
 			z = self.model.encode(obs, task)
 			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
@@ -212,7 +214,7 @@ class TDMPC2(torch.nn.Module):
 		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], h, task, return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, z, t0=False, h=None, eval_mode=False, task=None):
+	def _plan(self, z, t0=False, h=None, dt=None, eval_mode=False, task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 
@@ -234,7 +236,7 @@ class TDMPC2(torch.nn.Module):
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(_z, _h, task)[1]
-				_z, _h = self.model.forward(_z, pi_actions[t], _h, task)
+				_z, _h = self.model.forward(_z, pi_actions[t], _h, task, dt=dt)
 			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
 
 		# Initialize state and parameters
