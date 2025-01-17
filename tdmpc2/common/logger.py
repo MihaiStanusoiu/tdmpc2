@@ -150,7 +150,7 @@ class Logger:
 			entity=self.entity,
             id=str(cfg.exp_name),
 			name=str(cfg.exp_name),
-            resume='allow',
+            resume='allow' if cfg.checkpoint != '???' else None,
 			group=self._group,
 			tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
 			dir=self._log_dir,

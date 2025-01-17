@@ -101,7 +101,7 @@ class WorldModel(nn.Module):
 			emb = emb.repeat(x.shape[0], 1)
 		return torch.cat([x, emb], dim=-1)
 
-	def encode(self, obs, task):
+	def encode(self, obs, task=None):
 		"""
 		Encodes an observation into its latent representation.
 		This implementation assumes a single state-based observation.
@@ -112,7 +112,7 @@ class WorldModel(nn.Module):
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
 		return self._encoder[self.cfg.obs](obs)
 
-	def rnn(self, z, a, task, h=None):
+	def rnn(self, z, a, task=None, h=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 		z = torch.cat([z, a], dim=-1)
@@ -123,7 +123,7 @@ class WorldModel(nn.Module):
 		readout, h = self._rnn(z, h)
 		return readout, h
 
-	def next(self, z, a, h, task):
+	def next(self, z, a, h, task=None):
 		"""
 		Predicts the next latent state given the current latent state and action.
 		"""
@@ -133,7 +133,7 @@ class WorldModel(nn.Module):
 		z_next = self._dynamics(z)
 		return z_next
 
-	def forward(self, z, a, h, task):
+	def forward(self, z, a, h, task=None):
 		"""
 		Forward pass through the world model.
 		"""
@@ -141,7 +141,7 @@ class WorldModel(nn.Module):
 		z_next = self.next(z, a, h, task)
 		return z_next, h
 	
-	def reward(self, z, a, h, task):
+	def reward(self, z, a, h, task=None):
 		"""
 		Predicts instantaneous (single-step) reward.
 		"""
@@ -150,7 +150,7 @@ class WorldModel(nn.Module):
 		z = torch.cat([z, a, h], dim=-1)
 		return self._reward(z)
 
-	def pi(self, z, h, task):
+	def pi(self, z, h, task=None):
 		"""
 		Samples an action from the policy prior.
 		The policy prior is a Gaussian distribution with
@@ -180,7 +180,7 @@ class WorldModel(nn.Module):
 
 		return mu, pi, log_pi, log_std
 
-	def Q(self, z, a, h, task, return_type='min', target=False, detach=False):
+	def Q(self, z, a, h, task=None, return_type='min', target=False, detach=False):
 		"""
 		Predict state-action value.
 		`return_type` can be one of [`min`, `avg`, `all`]:

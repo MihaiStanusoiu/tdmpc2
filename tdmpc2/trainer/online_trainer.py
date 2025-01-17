@@ -64,7 +64,7 @@ class OnlineTrainer(Trainer):
 		else:
 			obs = obs.unsqueeze(0).cpu()
 		if action is None:
-			action = torch.full_like(self.env.rand_act(), float('nan'))
+			action = torch.full_like(self.env.rand_act(), 0.0)
 		if reward is None:
 			reward = torch.tensor(float('nan'))
 		td = TensorDict(
@@ -75,8 +75,8 @@ class OnlineTrainer(Trainer):
 		batch_size=(1,))
 		return td
 
-	def save(self, metrics):
-		self.logger.save_agent(self.agent, self.buffer, metrics, identifier=f'{self._step}')
+	def save(self, metrics, identifier='final'):
+		self.logger.save_agent(self.agent, self.buffer, metrics, identifier)
 
 	def load(self):
 		"""Load a TD-MPC2 agent."""
@@ -116,7 +116,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
 					identifier = f'{self._step}' if not self.cfg.override else 'final'
-					self.save(train_metrics)
+					self.logger.save_agent(self.agent, None, identifier=f'{self._step}')
 					eval_next = False
 					reset_success_count = True
 
@@ -151,6 +151,17 @@ class OnlineTrainer(Trainer):
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
+				if self.cfg.warmup_h:
+					# h warmup
+					h = self.agent.initial_h.detach()
+					if len(self._tds) > 1:
+						burn_in_tds = self._tds[-self.cfg.burn_in:-1]
+						prev_obs = [td['obs'] for td in burn_in_tds]
+						prev_act = [td['action'] for td in burn_in_tds]
+						prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
+						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
+						with torch.no_grad():
+							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h)
 				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h)
 			else:
 				action = self.env.rand_act()

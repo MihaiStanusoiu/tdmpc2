@@ -81,6 +81,7 @@ num_q: 5
 dropout: 0.01
 simnorm_dim: 8
 learned_init_h: false
+warmup_h: false
 
 # logging
 wandb_project: ltc-tdmpc2
