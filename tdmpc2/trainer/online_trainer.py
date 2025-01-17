@@ -16,6 +16,7 @@ class OnlineTrainer(Trainer):
 		self._step = 0
 		self._ep_idx = 0
 		self._start_time = time()
+		self._tds = []
 
 	def common_metrics(self):
 		"""Return a dictionary of current metrics."""
@@ -63,7 +64,7 @@ class OnlineTrainer(Trainer):
 		else:
 			obs = obs.unsqueeze(0).cpu()
 		if action is None:
-			action = torch.full_like(self.env.rand_act(), float('nan'))
+			action = torch.full_like(self.env.rand_act(), 0.0)
 		if reward is None:
 			reward = torch.tensor(float('nan'))
 		td = TensorDict(
@@ -73,16 +74,15 @@ class OnlineTrainer(Trainer):
 		batch_size=(1,))
 		return td
 
-	def save(self, metrics):
-		self.logger.save_agent(self.agent, self.buffer, metrics, identifier=f'{self._step}')
+	def save(self, metrics, identifier='final'):
+		self.logger.save_agent(self.agent, self.buffer, metrics, identifier)
 
 	def load(self):
 		"""Load a TD-MPC2 agent."""
-		artifact = self.logger._wandb.use_artifact(self.cfg.checkpoint + ':v0', type='model')
-		artifact_dir = artifact.download()
-		self.agent.load(artifact_dir, load_pi_only=self.cfg.freeze_pi)
-		buffer_artifact = self.logger._wandb.use_artifact(self.logger._group + '-' + str(self.logger._seed) + '-buffer', type='dataset')
-		buffer_artifact_dir = buffer_artifact.download()
+		fp = self.logger.load_agent()
+		self.agent.load(fp, load_pi_only=self.cfg.freeze_pi)
+		# buffer_artifact = self.logger._wandb.use_artifact(self.logger._group + '-' + str(self.logger._seed) + '-buffer', type='dataset')
+		# buffer_artifact_dir = buffer_artifact.download()
 		# TODO: Load buffer
 
 		self._step = self.agent.loss['step']
@@ -90,13 +90,16 @@ class OnlineTrainer(Trainer):
 
 	def train(self):
 		"""Train a TD-MPC2 agent."""
-		train_metrics, done, eval_next = {}, True, False
+		train_metrics, done, eval_next, info = {}, True, False, {}
 
 		if self.cfg.checkpoint != '???':
 			train_metrics = self.load()
 			print(colored(f'Loaded agent from {self.cfg.checkpoint}', 'green', attrs=['bold']))
 
 		success_count = 0
+		ep_count = 0
+		reset_success_count = False
+		log_success_rate = False
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
@@ -109,7 +112,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
 					identifier = f'{self._step}' if not self.cfg.override else 'final'
-					self.save(train_metrics)
+					self.logger.save_agent(self.agent, None, identifier=f'{self._step}')
 					eval_next = False
 
 				if self._step > 0:
@@ -125,7 +128,8 @@ class OnlineTrainer(Trainer):
 					train_metrics.pop("episode_reward")
 					train_metrics.pop("episode_success")
 					train_metrics.pop("success_rate")
-					self._ep_idx = self.buffer.add(torch.cat(self._tds))
+					if len(self._tds) > 0:
+						self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
 				self._tds = [self.to_td(obs)]

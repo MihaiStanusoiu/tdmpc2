@@ -26,7 +26,7 @@ RUN apt-get -y update && \
     ffmpeg cmake swig libssl-dev libcurl4-openssl-dev libopenmpi-dev python3-dev zlib1g-dev \
     qtbase5-dev qtdeclarative5-dev libglib2.0-0 libglu1-mesa-dev libgl1-mesa-dev libvulkan1 \
     libgl1-mesa-glx libosmesa6 libosmesa6-dev libglew-dev mesa-utils && \
-    apt-get clean && \
+    apt-get clean && \a
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir /root/.ssh
