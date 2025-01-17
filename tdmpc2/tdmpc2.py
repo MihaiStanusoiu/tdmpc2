@@ -205,7 +205,7 @@ class TDMPC2(torch.nn.Module):
 		G, discount = 0, 1
 		for t in range(self.cfg.horizon):
 			reward = math.two_hot_inv(self.model.reward(z, actions[t], h, task), self.cfg)
-			z, h = self.model.forward(z, actions[t], task, h)
+			z, h = self.model.forward(z, actions[t], h, task)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
@@ -234,7 +234,7 @@ class TDMPC2(torch.nn.Module):
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(_z, _h, task)[1]
-				_z, _h = self.model.forward(_z, pi_actions[t], task, _h)
+				_z, _h = self.model.forward(_z, pi_actions[t], _h, task)
 			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
 
 		# Initialize state and parameters
@@ -387,12 +387,12 @@ class TDMPC2(torch.nn.Module):
 
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
-		hs[0] = h.detach()
+		hs[0] = h
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
 			ht = ht + self._mask(self.initial_h.detach(), _is_first.float())
-			z, h = self.model.forward(z, _action, task, hs[t])
+			z, h = self.model.forward(z, _action, hs[t], task)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
 			hs[t+1] = h
