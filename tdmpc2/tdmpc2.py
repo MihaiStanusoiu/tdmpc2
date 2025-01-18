@@ -21,8 +21,8 @@ class TDMPC2(torch.nn.Module):
 		self.cfg = cfg
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
+		self.uncompiled_model = self.model
 		if self.cfg.compile:
-			self.uncompiled_model = self.model
 			self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
@@ -93,9 +93,9 @@ class TDMPC2(torch.nn.Module):
 		Args:
 			fp (str or dict): Filepath or state dict to load.
 		"""
-		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device())
+		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device(), weights_only=False)
 
-		self.loss = state_dict["metrics"]
+		self.loss = state_dict.get('metrics', {})
 		state_dict = state_dict["model"] if "model" in state_dict else state_dict
 		def load_sd_hook(model, local_state_dict, prefix, *args):
 			name_map = [

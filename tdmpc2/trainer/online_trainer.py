@@ -85,7 +85,8 @@ class OnlineTrainer(Trainer):
 		# buffer_artifact_dir = buffer_artifact.download()
 		# TODO: Load buffer
 
-		self._step = self.agent.loss['step']
+		# self._step = self.agent.loss['step']
+		self._step = int(self.cfg.checkpoint) + 1
 		return self.agent.loss
 
 	def train(self):
