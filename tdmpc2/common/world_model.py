@@ -25,7 +25,7 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, return_sequences=False)
+		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers, return_sequences=False)
 		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
@@ -66,6 +66,16 @@ class WorldModel(nn.Module):
 	@property
 	def total_params(self):
 		return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+	def non_rnn_params(self):
+		# return param generator for all non-RNN parameters
+		rnn_params = set(dict(self._rnn.named_parameters()).keys())
+		filtered_params = {
+			name: param
+			for name, param in self.named_parameters()
+			if name not in rnn_params
+		}
+		return set(filtered_params.values())
 
 	def to(self, *args, **kwargs):
 		super().to(*args, **kwargs)
@@ -120,8 +130,8 @@ class WorldModel(nn.Module):
 			z = z.unsqueeze(0)
 		if h is None:
 			h = self.initial_h.expand(z.shape[1], -1)
-		if dt is None:
-			dt = torch.ones((1, 1), device=h.device, requires_grad=False)
+		# if dt is None:
+		# 	dt = torch.ones((z.shape[0], z.shape[1], 1), device=h.device, requires_grad=False)
 		readout, h = self._rnn(z, h, dt)
 		return readout, h
 

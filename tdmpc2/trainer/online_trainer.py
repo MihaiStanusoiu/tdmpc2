@@ -57,7 +57,7 @@ class OnlineTrainer(Trainer):
 			episode_success=np.nanmean(ep_successes),
 		)
 
-	def to_td(self, obs, action=None, reward=None, h=None, is_first=False):
+	def to_td(self, obs, action=None, reward=None, done=False, h=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -71,6 +71,7 @@ class OnlineTrainer(Trainer):
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
+			done=torch.tensor(done, dtype=torch.float).unsqueeze(0),
 			is_first=torch.ones((1, 1), dtype=torch.float) if is_first else torch.zeros((1, 1), dtype=torch.float),
 		batch_size=(1,))
 		return td
@@ -86,7 +87,8 @@ class OnlineTrainer(Trainer):
 		# buffer_artifact_dir = buffer_artifact.download()
 		# TODO: Load buffer
 
-		self._step = self.agent.loss['step']
+		# self._step = self.agent.loss['step']
+		self._step = int(self.cfg.checkpoint) + 1
 		return self.agent.loss
 
 	def train(self):
@@ -116,7 +118,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
 					identifier = f'{self._step}' if not self.cfg.override else 'final'
-					self.logger.save_agent(self.agent, None, identifier=f'{self._step}')
+					self.logger.save_agent(self.agent, None, metrics=eval_metrics, identifier=f'{self._step}')
 					eval_next = False
 					reset_success_count = True
 
@@ -147,7 +149,7 @@ class OnlineTrainer(Trainer):
 				obs = self.env.reset()
 				is_first = True
 				h = self.agent.initial_h.detach()
-				self._tds = [self.to_td(obs, is_first=True)]
+				self._tds = [self.to_td(obs, done=False, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
@@ -166,11 +168,11 @@ class OnlineTrainer(Trainer):
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, h, is_first=False))
+			self._tds.append(self.to_td(obs, action, reward, done, h, is_first=False))
 			h = h_next
 
 			# Update agent
-			if self._step >= self.cfg.seed_steps:
+			if self._step >= self.cfg.seed_steps and self.buffer.num_eps > 0:
 				if self._step == self.cfg.seed_steps:
 					num_updates = self.cfg.seed_steps
 					print('Pretraining agent on seed data...')

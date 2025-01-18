@@ -76,6 +76,8 @@ num_channels: 32
 mlp_dim: 512
 latent_dim: 512
 hidden_dim: 512
+backbone_units: 512
+backbone_layers: 2
 task_dim: 96
 num_q: 5
 dropout: 0.01
@@ -86,6 +88,7 @@ warmup_h: false
 # logging
 wandb_project: ltc-tdmpc2
 wandb_entity: mihaistanusoiu-tu-wien
+wandb_group: ???
 wandb_silent: false
 enable_wandb: true
 save_csv: true

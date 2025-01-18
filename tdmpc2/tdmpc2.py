@@ -98,7 +98,7 @@ class TDMPC2(torch.nn.Module):
 		Args:
 			fp (str or dict): Filepath or state dict to load.
 		"""
-		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device())
+		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device(), weights_only=False)
 
 		self.loss = state_dict["metrics"]
 		state_dict = state_dict["model"] if "model" in state_dict else state_dict
@@ -286,7 +286,7 @@ class TDMPC2(torch.nn.Module):
 		self._prev_mean.copy_(mean)
 		return a.clamp(-1, 1)
 
-	def update_pi(self, zs, hs, task):
+	def update_pi(self, zs, h, task):
 		"""
 		Update policy using a sequence of latent states.
 
@@ -297,7 +297,21 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			float: Loss of the policy update.
 		"""
-		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
+		hs = [h]
+		pis = []
+		log_pis = []
+		for z in zs:
+			_, pi, log_pi, _ = self.model.pi(z, h, task)
+			with torch.no_grad():
+				_, h = self.model.rnn(z, pi, task=task, h=h)
+			pis.append(pi)
+			log_pis.append(log_pi)
+			hs.append(h)
+		hs = hs[:-1]
+		pis = torch.stack(pis)
+		log_pis = torch.stack(log_pis)
+		hs = torch.stack(hs)
+
 		qs = self.model.Q(zs, pis, hs, task, return_type='avg', detach=True)
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
@@ -325,9 +339,19 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: TD-target.
 		"""
-		pi = self.model.pi(next_z, h, task)[1]
+		hs = [h]
+		pis = []
+		for z in next_z:
+			pi = self.model.pi(z, h, task)[1]
+			_, h = self.model.rnn(z, pi, task=task, h=h)
+			pis.append(pi)
+			hs.append(h)
+		hs = hs[:-1]
+		pis = torch.stack(pis)
+		hs = torch.stack(hs)
+
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
-		return reward + discount * self.model.Q(next_z, pi, h, task, return_type='min', target=True)
+		return reward + discount * self.model.Q(next_z, pis, hs, task, return_type='min', target=True)
 
 	@staticmethod
 	def _mask(value, mask):
@@ -376,9 +400,10 @@ class TDMPC2(torch.nn.Module):
 			next_z = self.model.encode(obs[1:], task)
 
 		# Encoding memory
-		prev_z = self.model.encode(prev_obs, task)
 		h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		_, h = self.model.rnn(prev_z, prev_action, task, h)
+		if len(prev_obs) > 0:
+			prev_z = self.model.encode(prev_obs, task)
+			_, h = self.model.rnn(prev_z.detach(), prev_action, task, h)
 
 		# Prepare for update
 		self.model.train()
@@ -392,8 +417,8 @@ class TDMPC2(torch.nn.Module):
 		hs[0] = h
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
-			ht = self._mask(hs[t], 1.0 - _is_first.float())
-			ht = ht + self._mask(self.initial_h.detach(), _is_first.float())
+			# ht = self._mask(hs[t], 1.0 - _is_first.float())
+			# ht = ht + self._mask(self.initial_h, _is_first.float())
 			z, h = self.model.forward(z, _action, hs[t], task)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
@@ -407,7 +432,7 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_z, hs[1:], reward, task)
+			td_targets = self._td_target(next_z, hs[1], reward, task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -435,7 +460,7 @@ class TDMPC2(torch.nn.Module):
 
 		if not self.cfg.freeze_pi:
 			# Update policy
-			pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs.detach(), task)
+			pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs[0].detach(), task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
@@ -469,7 +494,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, is_first, task = buffer.sample()
+		obs, action, reward, done, is_first, task = buffer.sample()
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
