@@ -16,8 +16,7 @@ class Buffer():
 		self._capacity = min(cfg.buffer_size, cfg.steps)
 		self._sampler = SliceSampler(
 			num_slices=self.cfg.batch_size,
-			# slice_len=self.cfg.horizon+self.cfg.burn_in+1,
-			end_key='done',
+			end_key=None,
 			traj_key='episode',
 			truncated_key=None,
 			strict_length=True,
@@ -78,7 +77,7 @@ class Buffer():
 		# check if any done value is true, or 1.0
 		done = td.get('done')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
 		# h = td['h'].contiguous()
-		is_first = td['is_first'][self.cfg.burn_in:].contiguous()
+		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()

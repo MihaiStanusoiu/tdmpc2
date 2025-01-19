@@ -385,7 +385,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, obs, action, reward, is_first, task=None):
+	def _update(self, prev_obs, prev_action, prev_is_first, obs, action, reward, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -401,9 +401,12 @@ class TDMPC2(torch.nn.Module):
 
 		# Encoding memory
 		h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		if len(prev_obs) > 0:
-			prev_z = self.model.encode(prev_obs, task)
-			_, h = self.model.rnn(prev_z.detach(), prev_action, task, h)
+		for _, (_a, _obs, _is_first) in enumerate(
+					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_is_first.unbind(0))):
+			_h = self._mask(h, 1.0 - _is_first.float())
+			_h = _h + self._mask(self.initial_h, _is_first.float())
+			z = self.model.encode(_obs, task)
+			_, h = self.model.rnn(z.detach(), _a, task, _h)
 
 		# Prepare for update
 		self.model.train()
@@ -417,8 +420,8 @@ class TDMPC2(torch.nn.Module):
 		hs[0] = h
 		consistency_loss = 0
 		for t, (_action, _next_z, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), is_first.unbind(0))):
-			# ht = self._mask(hs[t], 1.0 - _is_first.float())
-			# ht = ht + self._mask(self.initial_h, _is_first.float())
+			ht = self._mask(hs[t], 1.0 - _is_first.float())
+			ht = ht + self._mask(self.initial_h, _is_first.float())
 			z, h = self.model.forward(z, _action, hs[t], task)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
@@ -500,5 +503,5 @@ class TDMPC2(torch.nn.Module):
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, is_first, **kwargs)
+		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], is_first[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, is_first[self.cfg.burn_in:], **kwargs)
 

@@ -128,6 +128,8 @@ class WorldModel(nn.Module):
 		z = torch.cat([z, a], dim=-1)
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
+		if a.dim() != 3:
+			a = a.unsqueeze(0)
 		if h is None:
 			h = self.initial_h.expand(z.shape[1], -1)
 		# if dt is None:
