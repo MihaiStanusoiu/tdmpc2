@@ -76,14 +76,7 @@ class POMDPWrapper(Wrapper):
         elif self.pomdp_type == 'flickering':
             # Note: flickering is equivalent to:
             #   flickering_and_random_sensor_missing, random_noise_and_flickering, random_sensor_missing_and_flickering
-            if np.random.rand() <= self.flicker_prob:
-                obs = np.zeros(obs.shape)
-                delay = info.get('delay', 0)
-                delay += 1
-                info['delay'] = delay
-                return obs, info
-            else:
-                return obs.flatten(), info
+            return obs, info
         elif self.pomdp_type == 'random_noise':
             return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten(), info
         elif self.pomdp_type == 'random_sensor_missing':
@@ -94,15 +87,7 @@ class POMDPWrapper(Wrapper):
             # Note: remove_velocity_and_flickering is equivalent to flickering_and_remove_velocity
             # Remove velocity
             new_obs = obs.flatten()[self.remain_obs_idx]
-            # Flickering
-            if np.random.rand() <= self.flicker_prob:
-                obs = np.zeros(new_obs.shape)
-                delay = info.get('delay', 0)
-                delay += 1
-                info['delay'] = delay
-                return obs, info
-            else:
-                return new_obs, info
+            return new_obs, info
         elif self.pomdp_type == 'remove_velocity_and_random_noise':
             # Note: remove_velocity_and_random_noise is equivalent to random_noise_and_remove_velocity
             # Remove velocity
@@ -118,15 +103,8 @@ class POMDPWrapper(Wrapper):
             return new_obs, info
         elif self.pomdp_type == 'flickering_and_random_noise':
             # Flickering
-            if np.random.rand() <= self.flicker_prob:
-                new_obs = np.zeros(obs.shape)
-                delay = info.get('delay', 0)
-                delay += 1
-                info['delay'] = delay
-            else:
-                new_obs = obs
             # Add random noise
-            return (new_obs + np.random.normal(0, self.random_noise_sigma, new_obs.shape)).flatten()
+            return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
         elif self.pomdp_type == 'random_noise_and_random_sensor_missing':
             # Random noise
             new_obs = (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
