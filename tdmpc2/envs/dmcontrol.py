@@ -30,6 +30,7 @@ class ExtendedTimeStep(NamedTuple):
 	def first(self):
 		return self.step_type == StepType.FIRST
 
+
 	def mid(self):
 		return self.step_type == StepType.MID
 
@@ -157,7 +158,8 @@ class TimeStepToGymWrapper:
 		self.task = task
 		self.max_episode_steps = 500
 		self.t = 0
-	
+		self.substeps = 0
+
 	@property
 	def unwrapped(self):
 		return self.env
@@ -175,12 +177,18 @@ class TimeStepToGymWrapper:
 
 	def reset(self):
 		self.t = 0
+		self.substeps = 0
 		return self._obs_to_array(self.env.reset().observation)
 	
 	def step(self, action):
 		self.t += 1
+		self.substeps += self.env._n_sub_steps
+		timestamp = self.t * self.env._n_sub_steps * self.env._n_sub_steps * self.env._physics.timestep()
 		time_step = self.env.step(action)
-		return self._obs_to_array(time_step.observation), time_step.reward, time_step.last() or self.t == self.max_episode_steps, defaultdict(float)
+		info = {
+			'timestamp': time_step
+		}
+		return self._obs_to_array(time_step.observation), time_step.reward, time_step.last() or self.t == self.max_episode_steps, info
 
 	def render(self, mode='rgb_array', width=384, height=384, camera_id=0):
 		camera_id = dict(quadruped=2).get(self.domain, camera_id)
