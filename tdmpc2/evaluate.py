@@ -78,17 +78,11 @@ def evaluate(cfg: dict):
 			task_idx = None
 		ep_rewards, ep_successes = [], []
 		for i in range(cfg.eval_episodes):
-			obs, done, ep_reward, info , t, hidden = env.reset(task_idx=task_idx), False, 0, {}, 0, agent.initial_h.detach()
-			dt_offset = 0.0
+			obs, done, ep_reward, info , t, hidden = env.reset(task_idx=task_idx), False, 0, {'timestep': 0.0}, 0, agent.initial_h.detach()
 			if cfg.save_video:
 				logger.video.init(env, enabled=True)
 			while not done:
-				delay = info.get('delay') or 0.0
-				if delay != 0.0:
-					dt_offset = float(delay)
-				else:
-					action, hidden = agent.act(obs, t0=t==0, h=hidden, dt=1.0+dt_offset, eval_mode=True)
-					dt_offset = 0.0
+				action, hidden = agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
 				obs, reward, done, info = env.step(action)
 				ep_reward += reward
 				t += 1

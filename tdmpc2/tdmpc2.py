@@ -174,7 +174,7 @@ class TDMPC2(torch.nn.Module):
 		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
 	@torch.no_grad()
-	def act(self, obs, t0=False, h=None, dt=1.0, eval_mode=False, task=None):
+	def act(self, obs, t0=False, h=None, info={}, eval_mode=False, task=None):
 		"""
 		Select an action by planning in the latent space of the world model.
 
@@ -192,7 +192,9 @@ class TDMPC2(torch.nn.Module):
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
 			z = self.model.encode(obs, task)
-			tensor_dt = torch.tensor([dt], dtype=torch.float, device=self.device, requires_grad=False).unsqueeze(0)
+			tensor_dt = None
+			if info.get("timestep") is not None:
+				tensor_dt = torch.tensor([info['timestep']], dtype=torch.float, device=self.device, requires_grad=False).unsqueeze(0)
 			torch.compiler.cudagraph_mark_step_begin()
 			a = self.plan(z, t0=t0, h=h, dt=tensor_dt, eval_mode=eval_mode, task=task)
 			_, h = self.model.rnn(z, a.unsqueeze(0), task, h, dt=tensor_dt)

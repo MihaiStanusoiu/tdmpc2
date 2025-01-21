@@ -31,13 +31,13 @@ class OnlineTrainer(Trainer):
 		ep_rewards, ep_successes = [], []
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
-			obs, done, ep_reward, t, hidden = self.env.reset(), False, 0, 0, self.agent.initial_h.detach()
+			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestep': 0.0}
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
 				self.logger.video.init(self.env, enabled=True)
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
-				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, eval_mode=True)
+				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
 				obs, reward, done, info = self.env.step(action)
 				ep_reward += reward
 				t += 1
