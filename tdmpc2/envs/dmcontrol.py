@@ -154,13 +154,14 @@ class TimeStepToGymWrapper:
 			high=np.full(act_shp, env.action_spec().maximum),
 			dtype=env.action_spec().dtype)
 		self.env = env
+		self.dm_env = self.env._env._env._env._env
 		self.domain = domain
 		self.task = task
 		self.max_episode_steps = 500
 		self.t = 0
 		self.substeps = 0
 		self.delay_enabled = 'flickering' in cfg.pomdp_type
-		self.delay_mu = self.env._n_sub_steps
+		self.delay_mu = self.dm_env._n_sub_steps
 		self.delay_sigma = cfg.flickering_sigma
 
 	@property
@@ -186,10 +187,11 @@ class TimeStepToGymWrapper:
 	
 	def step(self, action):
 		if self.delay_enabled:
-			self.env._n_sub_steps = int(np.round(np.random.normal(self.delay_mu, self.delay_mu * self.delay_sigma, 1))[0])
+			self.dm_env._n_sub_steps = int(np.round(np.random.normal(self.delay_mu, self.delay_mu * self.delay_sigma, 1))[0])
 		self.t += 1
-		self.substeps += self.env._n_sub_steps
-		timestamp = self.t * self.env._n_sub_steps * self.env._n_sub_steps * self.env._physics.timestep()
+		self.substeps += self.dm_env._n_sub_steps
+		# timestamp = self.t * self.dm_env._n_sub_steps * self.dm_env._n_sub_steps * self.dm_env._physics.timestep()
+		timestamp = self.dm_env._physics.data.time
 		time_step = self.env.step(action)
 		info = {
 			'timestamp': timestamp
