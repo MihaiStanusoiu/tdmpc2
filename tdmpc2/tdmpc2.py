@@ -193,8 +193,8 @@ class TDMPC2(torch.nn.Module):
 		if self.cfg.mpc:
 			z = self.model.encode(obs, task)
 			tensor_dt = None
-			if info.get("timestep") is not None:
-				tensor_dt = torch.tensor([info['timestep']], dtype=torch.float, device=self.device, requires_grad=False).unsqueeze(0)
+			if info.get("timestamp") is not None:
+				tensor_dt = torch.tensor([info['timestamp']], dtype=torch.float, device=self.device, requires_grad=False).unsqueeze(0)
 			torch.compiler.cudagraph_mark_step_begin()
 			a = self.plan(z, t0=t0, h=h, dt=tensor_dt, eval_mode=eval_mode, task=task)
 			_, h = self.model.rnn(z, a.unsqueeze(0), task, h, dt=tensor_dt)

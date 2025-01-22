@@ -25,7 +25,7 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers, return_sequences=False)
+		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers, backbone_dropout=cfg.backbone_dropout, mode="pure", return_sequences=False)
 		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))

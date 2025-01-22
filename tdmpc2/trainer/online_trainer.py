@@ -31,7 +31,7 @@ class OnlineTrainer(Trainer):
 		ep_rewards, ep_successes = [], []
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
-			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestep': 0.0}
+			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestamp': 0.0}
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
 				self.logger.video.init(self.env, enabled=True)
@@ -76,7 +76,7 @@ class OnlineTrainer(Trainer):
 		batch_size=(1,))
 		return td
 
-	def save(self, metrics, identifier='final'):
+	def save(self, metrics, identifier='model'):
 		self.logger.save_agent(self.agent, self.buffer, metrics, identifier)
 
 	def load(self):
@@ -88,12 +88,12 @@ class OnlineTrainer(Trainer):
 		# TODO: Load buffer
 
 		# self._step = self.agent.loss['step']
-		self._step = int(self.cfg.checkpoint) + 1
+		self._step = self.agent.loss['step']
 		return self.agent.loss
 
 	def train(self):
 		"""Train a TD-MPC2 agent."""
-		train_metrics, done, eval_next, info = {}, True, False, {}
+		train_metrics, done, eval_next, info = {}, True, False, {'timestamp': 0.0}
 
 		if self.cfg.checkpoint != '???':
 			train_metrics = self.load()
@@ -118,7 +118,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
 					identifier = f'{self._step}' if not self.cfg.override else 'final'
-					self.logger.save_agent(self.agent, None, metrics=eval_metrics, identifier=f'{self._step}')
+					self.logger.save_agent(self.agent, None, metrics=eval_metrics)
 					eval_next = False
 					reset_success_count = True
 
@@ -147,6 +147,7 @@ class OnlineTrainer(Trainer):
 						self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
+				info = {'timestamp': 0.0}
 				is_first = True
 				h = self.agent.initial_h.detach()
 				self._tds = [self.to_td(obs, done=False, is_first=True)]
@@ -164,7 +165,7 @@ class OnlineTrainer(Trainer):
 						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
 							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h)
-				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h)
+				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)

@@ -20,7 +20,7 @@ class Buffer():
 			traj_key='episode',
 			truncated_key=None,
 			strict_length=True,
-			compile=cfg.compile
+			compile=self.cfg.compile
 		)
 		self._batch_size = cfg.batch_size * (cfg.horizon+cfg.burn_in+1)
 		self._num_eps = 0
@@ -45,6 +45,7 @@ class Buffer():
 			pin_memory=False,
 			prefetch=0,
 			batch_size=self._batch_size,
+			compilable=self.cfg.compile
 		)
 
 	def _init(self, tds):

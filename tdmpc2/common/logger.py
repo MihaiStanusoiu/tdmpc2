@@ -2,6 +2,7 @@ import dataclasses
 import os
 import datetime
 import re
+import uuid
 
 import numpy as np
 import pandas as pd
@@ -152,10 +153,10 @@ class Logger:
             import wandb
         wandb.login(key="0b961bb8b95bbca48519a84eeca715dc4187268f")
         wandb.init(
-            project=self.project,
-            entity=self.entity,
-            # id=str(cfg.exp_name),
-            name=str(cfg.exp_name),
+			project=self.project,
+			entity=self.entity,
+            id=str(cfg.id) if cfg.id != '???' else None,
+			name=str(cfg.exp_name),
             resume='allow' if cfg.checkpoint != '???' else None,
             group=self._group,
             # tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
@@ -185,26 +186,41 @@ class Logger:
         return self._model_dir
 
     def load_agent(self):
-        identifier = str(self._checkpoint)
+        try:
+            identifier = 'model'
+            artifact = self._wandb.use_artifact(
+                self._group + '-' + str(self._seed) + '-' + str(identifier) + ':latest', type='model'
+            )
+        except:
+            identifier = str(self._checkpoint)
+            fp = f'{str(identifier)}.pt'
+            artifact = self._wandb.use_artifact(
+                self._group + '-' + str(self._seed) + '-' + str(identifier) + ':v0', type='model'
+            )
         fp = f'{str(identifier)}.pt'
-        artifact = self._wandb.use_artifact(
-            self._group + '-' + str(self._seed) + '-' + str(identifier) + ':v0', type='model'
-        )
         artifact_dir = artifact.download()
         return os.path.join(artifact_dir, fp)
 
-    def save_agent(self, agent=None, buffer=None, metrics={}, identifier='final'):
+    def save_agent(self, agent=None, buffer=None, metrics={}, identifier='model'):
         if self._save_agent and agent:
             fp = self._model_dir / f'{str(identifier)}.pt'
             agent.save(fp, metrics=metrics)
 
             if self._wandb:
-                artifact = self._wandb.Artifact(
-                    self._group + '-' + str(self._seed) + '-' + str(identifier),
-                    type='model',
-                )
-                artifact.add_file(fp)
-                self._wandb.log_artifact(artifact)
+                try:
+                    artifact = self._wandb.use_artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(identifier) + ":latest",
+                    )
+                    draft_artifact = artifact.new_draft()
+                    draft_artifact.add_file(fp)
+                    self._wandb.log_artifact(draft_artifact)
+                except:
+                    artifact = self._wandb.Artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(identifier),
+                        type='model',
+                    )
+                    artifact.add_file(fp)
+                    self._wandb.log_artifact(artifact)
         if self._save_buffer and buffer:
             bfp = self._model_dir
             ok = buffer.dumps(bfp)
