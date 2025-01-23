@@ -28,16 +28,20 @@ class OnlineTrainer(Trainer):
 
 	def eval(self):
 		"""Evaluate a TD-MPC2 agent."""
-		ep_rewards, ep_successes = [], []
+		ep_rewards, ep_successes, ep_runtime_means, ep_runtime_stds = [], [], [], []
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t = self.env.reset(), False, 0, 0
+			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
 				self.logger.video.init(self.env, enabled=True)
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
+				start_time = time.time_ns()
 				action = self.agent.act(obs, t0=t==0, eval_mode=True)
+				end_time = time.time_ns()
+				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
 				ep_reward += reward
 				t += 1
@@ -45,6 +49,8 @@ class OnlineTrainer(Trainer):
 					self.logger.video.record(self.env)
 			ep_rewards.append(ep_reward)
 			ep_successes.append(info['success'])
+			ep_runtime_means.append(np.mean(times))
+			ep_runtime_stds.append(np.std(times))
 			if self.cfg.save_video and not video_saved and info['success']:
 				self.logger.video.save(self._step)
 				video_saved = True
@@ -55,6 +61,8 @@ class OnlineTrainer(Trainer):
 		return dict(
 			episode_reward=np.nanmean(ep_rewards),
 			episode_success=np.nanmean(ep_successes),
+			episode_runtime_mean=np.nanmean(ep_runtime_means),
+			episode_runtime_std=np.nanmean(ep_runtime_stds),
 		)
 
 	def to_td(self, obs, action=None, reward=None):

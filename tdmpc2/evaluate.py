@@ -1,4 +1,5 @@
 import os
+import time
 
 from common.logger import Logger
 
@@ -79,10 +80,15 @@ def evaluate(cfg: dict):
 		ep_rewards, ep_successes = [], []
 		for i in range(cfg.eval_episodes):
 			obs, done, ep_reward, t, info = env.reset(task_idx=task_idx), False, 0, 0, {'timestep': 0.0}
+			times = []
 			if cfg.save_video:
 				logger.video.init(env, enabled=True)
 			while not done:
+				# measure and log inference time
+				start_time = time.time_ns()
 				action = agent.act(obs, t0=t==0, task=task_idx)
+				end_time = time.time_ns()
+				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = env.step(action)
 				ep_reward += reward
 				t += 1
@@ -90,10 +96,14 @@ def evaluate(cfg: dict):
 					logger.video.record(env)
 			ep_rewards.append(ep_reward)
 			ep_successes.append(info['success'])
+			time_mean = np.mean(times)
+			time_std = np.std(times)
 			metrics = dict(
 				episode=i,
 				episode_reward=ep_reward,
 				episode_success=info['success'],
+				runtime_mean=time_mean,
+				runtime_std=time_std,
 			)
 			logger.log(metrics, "evaluate_ep")
 			if cfg.save_video:
