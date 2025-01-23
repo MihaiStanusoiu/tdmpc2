@@ -3,7 +3,7 @@ from copy import deepcopy
 import torch
 import torch.nn as nn
 
-from ncps.torch import CfC
+from ncps.torch import CfC, LTC
 from common import layers, math, init
 from tensordict.nn import TensorDictParams
 
@@ -25,11 +25,15 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers, backbone_dropout=cfg.backbone_dropout, mode="pure", return_sequences=False)
+		if cfg.rnn_type == 'cfc':
+			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None, backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers, backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False, return_sequences=False)
+		elif cfg.rnn_type == 'ltc':
+			self._rnn = LTC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
+		elif cfg.rnn_type == 'lstm':
+			self._rnn = nn.LSTM(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False)
 		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
-		self._rnn.batch_first = False
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
 		self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
