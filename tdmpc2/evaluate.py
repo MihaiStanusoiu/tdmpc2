@@ -79,7 +79,7 @@ def evaluate(cfg: dict):
 			task_idx = None
 		ep_rewards, ep_successes = [], []
 		for i in range(cfg.eval_episodes):
-			obs, done, ep_reward, info , t, hidden = env.reset(task_idx=task_idx), False, 0, {'timestamp': 0.0}, 0, agent.initial_h.detach()
+			obs, done, ep_reward, info , t, hidden = env.reset(task_idx=task_idx), False, 0, {'timestamp': env.get_timestep()}, 0, agent.initial_h.detach()
 			times = []
 			if cfg.save_video:
 				logger.video.init(env, enabled=True)

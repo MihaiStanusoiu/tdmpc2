@@ -185,15 +185,14 @@ class Logger:
     def model_dir(self):
         return self._model_dir
 
-    def load_agent(self):
+    def load_agent(self, version='latest'):
         try:
             identifier = 'model'
             artifact = self._wandb.use_artifact(
-                self._group + '-' + str(self._seed) + '-' + str(identifier) + ':latest', type='model'
+                self._group + '-' + str(self._seed) + '-' + str(identifier) + f':{version}', type='model'
             )
         except:
             identifier = str(self._checkpoint)
-            fp = f'{str(identifier)}.pt'
             artifact = self._wandb.use_artifact(
                 self._group + '-' + str(self._seed) + '-' + str(identifier) + ':v0', type='model'
             )
@@ -201,7 +200,16 @@ class Logger:
         artifact_dir = artifact.download()
         return os.path.join(artifact_dir, fp)
 
-    def save_agent(self, agent=None, buffer=None, metrics={}, identifier='model'):
+    def load_buffer(self, version='latest'):
+        identifier = 'buffer'
+        artifact = self._wandb.use_artifact(
+            self._group + '-' + str(self._seed) + '-' + str(identifier) + f':{version}', type='dataset'
+        )
+        fp = 'buffer'
+        artifact_dir = artifact.download()
+        return os.path.join(artifact_dir, fp)
+
+    def save_agent(self, agent=None, buffer=None, metrics={}, identifier='model', buffer_identifier='buffer'):
         if self._save_agent and agent:
             fp = self._model_dir / f'{str(identifier)}.pt'
             agent.save(fp, metrics=metrics)
@@ -222,16 +230,24 @@ class Logger:
                     artifact.add_file(fp)
                     self._wandb.log_artifact(artifact)
         if self._save_buffer and buffer:
-            bfp = self._model_dir
+            bfp = os.path.join(self._model_dir, 'buffer')
             ok = buffer.dumps(bfp)
 
             if self._wandb and ok:
-                artifact = self._wandb.Artifact(
-                    self._group + '-' + str(self._seed) + '-buffer',
-                    type='dataset',
-                )
-                artifact.add_file(bfp)
-                self._wandb.log_artifact(artifact)
+                try:
+                    artifact = self._wandb.use_artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(buffer_identifier) + ":latest",
+                    )
+                    draft_artifact = artifact.new_draft()
+                    draft_artifact.add_file(bfp)
+                    self._wandb.log_artifact(draft_artifact)
+                except:
+                    artifact = self._wandb.Artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(buffer_identifier),
+                        type='dataset',
+                    )
+                    artifact.add_file(bfp)
+                    self._wandb.log_artifact(artifact)
 
     def finish(self, agent=None, buffer=None):
         try:

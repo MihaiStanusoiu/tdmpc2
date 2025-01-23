@@ -101,6 +101,13 @@ class Buffer():
 		except Exception as e:
 			return False
 
+	def loads(self, path):
+		try:
+			self._buffer.loads(path)
+			return True
+		except Exception as e:
+			return False
+
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
 		td = self._buffer.sample().view(-1, self.cfg.horizon+self.cfg.burn_in+1).permute(1, 0)

@@ -185,6 +185,9 @@ class TimeStepToGymWrapper:
 		self.ts = 0.0
 		self.env._n_sub_steps = self.delay_mu
 		return self._obs_to_array(self.env.reset().observation)
+
+	def get_timestep(self):
+		return self.env.control_timestep() * self.ts_norm
 	
 	def step(self, action):
 		if self.delay_enabled:
