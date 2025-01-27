@@ -33,7 +33,7 @@ class TDMPC2(torch.nn.Module):
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
-			{'params': self.model.initial_h if self.cfg.learned_init_h else []},
+			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
 		], lr=self.cfg.lr, capturable=True)
 		if not self.cfg.freeze_pi:
 			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
@@ -101,6 +101,9 @@ class TDMPC2(torch.nn.Module):
 		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device(), weights_only=False)
 
 		self.loss = state_dict["metrics"]
+		self.optim.load_state_dict(state_dict['wm_optim'])
+		if not self.cfg.freeze_pi:
+			self.pi_optim.load_state_dict(state_dict['pi_optim'])
 		state_dict = state_dict["model"] if "model" in state_dict else state_dict
 		def load_sd_hook(model, local_state_dict, prefix, *args):
 			name_map = [
@@ -156,15 +159,6 @@ class TDMPC2(torch.nn.Module):
 		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
 		self.uncompiled_model.load_state_dict(state_dict)
 		self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
-		# load optimizer state
-		optim_fp = os.path.splitext(fp)[0] + "_optim.pth"
-		if os.path.exists(optim_fp):
-			self.optim.load_state_dict(torch.load(optim_fp))
-		if not self.cfg.freeze_pi:
-			pi_optim_fp = os.path.splitext(fp)[0] + "_pi_optim.pth"
-			if os.path.exists(pi_optim_fp):
-				self.pi_optim.load_state_dict(torch.load(pi_optim_fp))
-
 		return
 
 	@property

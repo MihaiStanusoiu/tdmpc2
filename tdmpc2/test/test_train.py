@@ -1,14 +1,27 @@
 import unittest
 
+import hydra
 import torch
 
+from common.buffer import Buffer
+from common.logger import Logger
+from common.parser import parse_cfg
 
 
 class MyTestCase(unittest.TestCase):
+
+
     @staticmethod
     def _mask(value, mask):
         # Apply element-wise multiplication with broadcasting in PyTorch
         return value * mask.to(value.dtype)
+
+    @hydra.main(config_name='config', config_path='.')
+    def test_buffer_checkpointing(self, cfg: dict):
+        cfg = parse_cfg(cfg)
+        logger = Logger(cfg)
+        buffer = Buffer(cfg)
+
 
     def test_initial_h_masking(self):
         B = 256

@@ -88,16 +88,14 @@ class OnlineTrainer(Trainer):
 	def save(self, metrics, identifier='model'):
 		self.logger.save_agent(self.agent, self.buffer, metrics, identifier)
 
-	def load(self):
+	def load(self, version='latest'):
 		"""Load a TD-MPC2 agent."""
-		fp = self.logger.load_agent()
+		fp = self.logger.load_agent(version)
 		self.agent.load(fp, load_pi_only=self.cfg.freeze_pi)
-		# buffer_artifact = self.logger._wandb.use_artifact(self.logger._group + '-' + str(self.logger._seed) + '-buffer', type='dataset')
-		# buffer_artifact_dir = buffer_artifact.download()
-		# TODO: Load buffer
-
 		# self._step = self.agent.loss['step']
 		self._step = self.agent.loss['step']
+		self._ep_idx = self.agent.loss['episode']
+		self._start_time = time() - self.agent.loss['total_time']
 		return self.agent.loss
 
 	def train(self):
@@ -105,12 +103,12 @@ class OnlineTrainer(Trainer):
 		train_metrics, done, eval_next, info = {}, True, False, {'timestamp': self.env.get_timestep()}
 
 		if self.cfg.checkpoint != '???':
-			train_metrics = self.load()
+			train_metrics = self.load(str(self.cfg.checkpoint))
 			print(colored(f'Loaded agent from {self.cfg.checkpoint}', 'green', attrs=['bold']))
 
 		if self.cfg.load_buffer:
 			bfp = self.logger.load_buffer()
-			self.buffer.loads(bfp)
+			self.buffer.loads(bfp, self._ep_idx)
 
 		success_count = 0
 		ep_count = 0
@@ -131,7 +129,7 @@ class OnlineTrainer(Trainer):
 					eval_metrics.update(self.common_metrics())
 					self.logger.log(eval_metrics, 'eval')
 					identifier = f'{self._step}' if not self.cfg.override else 'final'
-					self.logger.save_agent(self.agent, None, metrics=eval_metrics)
+					self.logger.save_agent(self.agent, self.buffer, metrics=eval_metrics)
 					eval_next = False
 					reset_success_count = True
 

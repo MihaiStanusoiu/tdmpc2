@@ -207,7 +207,8 @@ class Logger:
         )
         fp = 'buffer'
         artifact_dir = artifact.download()
-        return os.path.join(artifact_dir, fp)
+        return artifact_dir
+        # return os.path.join(artifact_dir, fp)
 
     def save_agent(self, agent=None, buffer=None, metrics={}, identifier='model', buffer_identifier='buffer'):
         if self._save_agent and agent:
@@ -246,12 +247,12 @@ class Logger:
                         self._group + '-' + str(self._seed) + '-' + str(buffer_identifier),
                         type='dataset',
                     )
-                    artifact.add_file(bfp)
+                    artifact.add_dir(bfp)
                     self._wandb.log_artifact(artifact)
 
-    def finish(self, agent=None, buffer=None):
+    def finish(self, agent=None, buffer=None, metrics={}):
         try:
-            self.save_agent(agent, buffer)
+            self.save_agent(agent, buffer, metrics)
         except Exception as e:
             print(colored(f"Failed to save model: {e}", "red"))
         if self._wandb:

@@ -101,9 +101,14 @@ class Buffer():
 		except Exception as e:
 			return False
 
-	def loads(self, path):
+	def loads(self, path, num_eps):
+		self._storage_device = torch.device('cuda:0')
+		self._buffer = self._reserve_buffer(
+			LazyTensorStorage(self._capacity, device=self._storage_device)
+		)
 		try:
 			self._buffer.loads(path)
+			self._num_eps = num_eps
 			return True
 		except Exception as e:
 			return False
