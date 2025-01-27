@@ -150,7 +150,7 @@ class Logger:
         wandb.init(
 			project=self.project,
 			entity=self.entity,
-            # id=str(cfg.exp_name),
+            id=str(cfg.id) if cfg.id != '???' else None,
 			name=str(cfg.exp_name),
             resume='allow' if cfg.checkpoint != '???' else None,
 			group=self._group,
@@ -180,42 +180,74 @@ class Logger:
     def model_dir(self):
         return self._model_dir
 
-    def load_agent(self):
-        identifier = str(self._checkpoint)
+    def load_agent(self, version='latest'):
+        try:
+            identifier = 'model'
+            artifact = self._wandb.use_artifact(
+                self._group + '-' + str(self._seed) + '-' + str(identifier) + f':{version}', type='model'
+            )
+        except:
+            identifier = str(self._checkpoint)
+            artifact = self._wandb.use_artifact(
+                self._group + '-' + str(self._seed) + '-' + str(identifier) + ':v0', type='model'
+            )
         fp = f'{str(identifier)}.pt'
-        artifact = self._wandb.use_artifact(
-            self._group + '-' + str(self._seed) + '-' + str(identifier) + ':v0', type='model'
-        )
         artifact_dir = artifact.download()
         return os.path.join(artifact_dir, fp)
 
-    def save_agent(self, agent=None, buffer=None, metrics={}, identifier='final'):
+    def load_buffer(self, version='latest'):
+        identifier = 'buffer'
+        artifact = self._wandb.use_artifact(
+            self._group + '-' + str(self._seed) + '-' + str(identifier) + f':{version}', type='dataset'
+        )
+        fp = 'buffer'
+        artifact_dir = artifact.download()
+        return artifact_dir
+        # return os.path.join(artifact_dir, fp)
+
+    def save_agent(self, agent=None, buffer=None, metrics={}, identifier='model', buffer_identifier='buffer'):
         if self._save_agent and agent:
             fp = self._model_dir / f'{str(identifier)}.pt'
             agent.save(fp, metrics=metrics)
 
             if self._wandb:
-                artifact = self._wandb.Artifact(
-                    self._group + '-' + str(self._seed) + '-' + str(identifier),
-                    type='model',
-                )
-                artifact.add_file(fp)
-                self._wandb.log_artifact(artifact)
+                try:
+                    artifact = self._wandb.use_artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(identifier) + ":latest",
+                    )
+                    draft_artifact = artifact.new_draft()
+                    draft_artifact.add_file(fp)
+                    self._wandb.log_artifact(draft_artifact)
+                except:
+                    artifact = self._wandb.Artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(identifier),
+                        type='model',
+                    )
+                    artifact.add_file(fp)
+                    self._wandb.log_artifact(artifact)
         if self._save_buffer and buffer:
-            bfp = self._model_dir
+            bfp = os.path.join(self._model_dir, 'buffer')
             ok = buffer.dumps(bfp)
 
             if self._wandb and ok:
-                artifact = self._wandb.Artifact(
-                    self._group + '-' + str(self._seed) + '-buffer',
-                    type='dataset',
-                )
-                artifact.add_file(bfp)
-                self._wandb.log_artifact(artifact)
+                try:
+                    artifact = self._wandb.use_artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(buffer_identifier) + ":latest",
+                    )
+                    draft_artifact = artifact.new_draft()
+                    draft_artifact.add_file(bfp)
+                    self._wandb.log_artifact(draft_artifact)
+                except:
+                    artifact = self._wandb.Artifact(
+                        self._group + '-' + str(self._seed) + '-' + str(buffer_identifier),
+                        type='dataset',
+                    )
+                    artifact.add_dir(bfp)
+                    self._wandb.log_artifact(artifact)
 
-    def finish(self, agent=None, buffer=None):
+    def finish(self, agent=None, buffer=None, metrics={}):
         try:
-            self.save_agent(agent, buffer)
+            self.save_agent(agent, buffer, metrics)
         except Exception as e:
             print(colored(f"Failed to save model: {e}", "red"))
         if self._wandb:

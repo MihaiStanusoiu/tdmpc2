@@ -20,6 +20,7 @@ class Buffer():
 			traj_key='episode',
 			truncated_key=None,
 			strict_length=True,
+			compile=self.cfg.compile
 		)
 		self._batch_size = cfg.batch_size * (cfg.horizon+1)
 		self._num_eps = 0
@@ -44,6 +45,7 @@ class Buffer():
 			pin_memory=False,
 			prefetch=0,
 			batch_size=self._batch_size,
+			compilable=self.cfg.compile
 		)
 
 	def _init(self, tds):
@@ -91,6 +93,18 @@ class Buffer():
 	def dumps(self, path):
 		try:
 			self._buffer.dumps(path)
+			return True
+		except Exception as e:
+			return False
+
+	def loads(self, path, num_eps):
+		self._storage_device = torch.device('cuda:0')
+		self._buffer = self._reserve_buffer(
+			LazyTensorStorage(self._capacity, device=self._storage_device)
+		)
+		try:
+			self._buffer.loads(path)
+			self._num_eps = num_eps
 			return True
 		except Exception as e:
 			return False
