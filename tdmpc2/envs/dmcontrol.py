@@ -187,7 +187,7 @@ class TimeStepToGymWrapper:
 	
 	def step(self, action):
 		if self.delay_enabled:
-			self.dm_env._n_sub_steps = int(np.round(np.random.normal(self.delay_mu, self.delay_mu * self.delay_sigma, 1))[0])
+			self.dm_env._n_sub_steps = max(0, int(np.round(np.random.normal(self.delay_mu, self.delay_mu * self.delay_sigma, 1))[0]))
 		self.t += 1
 		self.substeps += self.dm_env._n_sub_steps
 		timestamp = self.t * self.dm_env._n_sub_steps * self.dm_env._n_sub_steps * self.dm_env._physics.timestep()
