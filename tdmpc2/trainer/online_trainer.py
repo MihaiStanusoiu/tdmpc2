@@ -66,7 +66,7 @@ class OnlineTrainer(Trainer):
 			episode_runtime_std=np.nanmean(ep_runtime_stds),
 		)
 
-	def to_td(self, obs, action=None, reward=None, done=False, h=None, is_first=False):
+	def to_td(self, obs, action=None, reward=None, done=False, dt=None, h=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -76,11 +76,14 @@ class OnlineTrainer(Trainer):
 			action = torch.full_like(self.env.rand_act(), 0.0)
 		if reward is None:
 			reward = torch.tensor(float('nan'))
+		if dt is not None:
+			dt = torch.tensor(dt, dtype=torch.float, requires_grad=False)
 		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			done=torch.tensor(done, dtype=torch.float).unsqueeze(0),
+			dt=dt.unsqueeze(0),
 			is_first=torch.ones((1, 1), dtype=torch.float) if is_first else torch.zeros((1, 1), dtype=torch.float),
 		batch_size=(1,))
 		return td
@@ -158,10 +161,10 @@ class OnlineTrainer(Trainer):
 						self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
-				info = {'timestamp': 0.0}
+				info = {'timestamp': self.env.get_timestep()}
 				is_first = True
 				h = self.agent.initial_h.detach()
-				self._tds = [self.to_td(obs, done=False, is_first=True)]
+				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
@@ -172,15 +175,17 @@ class OnlineTrainer(Trainer):
 						burn_in_tds = self._tds[-self.cfg.burn_in:-1]
 						prev_obs = [td['obs'] for td in burn_in_tds]
 						prev_act = [td['action'] for td in burn_in_tds]
+						prev_dt = [td['dt'] for td in burn_in_tds]
 						prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
 						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
+						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
-							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h)
+							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
 				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, done, h, is_first=False))
+			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, h, is_first=False))
 			h = h_next
 
 			# Update agent
