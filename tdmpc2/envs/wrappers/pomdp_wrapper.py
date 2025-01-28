@@ -124,7 +124,7 @@ class POMDPWrapper(Wrapper):
         #  1. Classic Control
         if env_name == "Pendulum-v0":
             remain_obs_idx = np.arange(0, 2)
-        elif env_name == "Acrobot-v1":
+        elif env_name == "Acrobot-v1" or env_name == "acrobot":
             remain_obs_idx = list(np.arange(0, 4))
         elif env_name == "MountainCarContinuous-v0":
             remain_obs_idx = list([0])
@@ -133,7 +133,7 @@ class POMDPWrapper(Wrapper):
             remain_obs_idx = np.arange(0, 8)
         elif env_name == "Ant-v3" or env_name == "Ant-v2":
             remain_obs_idx = list(np.arange(0, 13)) + list(np.arange(27, 111))
-        elif env_name == 'Walker2d-v3' or env_name == "Walker2d-v2":
+        elif env_name == 'Walker2d-v3' or env_name == "Walker2d-v2" or env_name == "walker":
             remain_obs_idx = np.arange(0, 8)
         elif env_name == 'Hopper-v3' or env_name == "Hopper-v2":
             remain_obs_idx = np.arange(0, 5)
