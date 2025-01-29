@@ -47,7 +47,7 @@ class TDMPC2(torch.nn.Module):
 		self._first_update = True
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
-			self._update = torch.compile(self._update)
+			self._update = torch.compile(self._update, mode="reduce-overhead")
 			self._burn_in_rollout = torch.compile(self._burn_in_rollout, mode="reduce-overhead")
 
 	@property
@@ -158,7 +158,8 @@ class TDMPC2(torch.nn.Module):
 		# load_sd_hook(self.model, state_dict, "_Qs.")
 		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
 		self.uncompiled_model.load_state_dict(state_dict)
-		self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
+		if self.cfg.compile:
+			self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
 		return
 
 	@property
@@ -420,7 +421,7 @@ class TDMPC2(torch.nn.Module):
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
 			ht = ht + self._mask(self.initial_h, _is_first.float())
-			z, h = self.model.forward(z, _action, hs[t], task, dt=dt)
+			z, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
 			hs[t+1] = h
