@@ -384,7 +384,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, prev_dt, prev_is_first, obs, action, reward, dt, is_first, task=None):
+	def _update(self, prev_obs, prev_action, prev_hidden, prev_dt, prev_is_first, obs, action, hidden, reward, dt, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -399,7 +399,9 @@ class TDMPC2(torch.nn.Module):
 			next_z = self.model.encode(obs[1:], task)
 
 		# Encoding memory
-		h = self.initial_h.repeat(self.cfg.batch_size, 1)
+		# h = self.initial_h.repeat(self.cfg.batch_size, 1)
+
+		h = prev_hidden[0].detach()
 		for _, (_a, _obs, _dt, _is_first) in enumerate(
 					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
 			_h = self._mask(h, 1.0 - _is_first.float())
@@ -416,19 +418,34 @@ class TDMPC2(torch.nn.Module):
 
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
-		hs[0] = h
+		hs[0] = h.detach()
 		consistency_loss = 0
+		one_step_prediction_error = 0
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first.float())
 			ht = ht + self._mask(self.initial_h, _is_first.float())
 			z, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
+			if t == 0:
+				one_step_prediction_error = consistency_loss
 			zs[t+1] = z
 			hs[t+1] = h
 
 		# Predictions
 		_zs = zs[:-1]
 		_hs = hs[:-1]
+
+		# Q-value discrepancy for timestep t and t+H
+		with torch.no_grad():
+			q_hat = self.model.Q(_zs, action, _hs, task, return_type='avg')
+			q = self.model.Q(_zs, action, hidden[:-1], task, return_type='avg')
+			# get maximum q value to normalize
+			q_max = q_hat.max()
+			# Q-value discrepancy for t=0 and t=H
+			q_discrepancy = (q_hat - q) / q_max
+			q_discrepancy_t = q_discrepancy[0]
+			q_discrepancy_H = q_discrepancy[-1]
+
 		qs = self.model.Q(_zs, action, _hs, task, return_type='all')
 		reward_preds = self.model.reward(_zs, action, _hs, task)
 
@@ -474,8 +491,12 @@ class TDMPC2(torch.nn.Module):
 			"consistency_loss": consistency_loss,
 			"reward_loss": reward_loss,
 			"value_loss": value_loss,
+
 			# "pi_loss": pi_loss,
 			"total_loss": total_loss,
+			"Q_discrepancy_initial_state": q_discrepancy_t,
+			"Q_discrepancy_final_state": q_discrepancy_H,
+			"one_step_prediction_error": one_step_prediction_error,
 			"grad_norm": grad_norm,
 			# "pi_grad_norm": pi_grad_norm,
 			"pi_scale": self.scale.value,
@@ -496,11 +517,11 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, done, dt, is_first, task = buffer.sample()
+		obs, action, h, reward, done, dt, is_first, task = buffer.sample()
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], dt[:self.cfg.burn_in], is_first[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first[self.cfg.burn_in:], **kwargs)
+		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], h[:self.cfg.burn_in], dt[:self.cfg.burn_in], is_first[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], h[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first[self.cfg.burn_in:], **kwargs)
 

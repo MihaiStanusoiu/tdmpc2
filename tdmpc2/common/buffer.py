@@ -15,14 +15,16 @@ class Buffer():
 		self._device = torch.device('cuda:0')
 		self._capacity = min(cfg.buffer_size, cfg.steps)
 		self._sampler = SliceSampler(
-			num_slices=self.cfg.batch_size,
-			end_key=None,
+			# num_slices=self.cfg.batch_size,
+			slice_len=cfg.horizon+cfg.burn_in+1,
+			# end_key=None,
 			traj_key='episode',
 			truncated_key=None,
 			strict_length=True,
 			compile=self.cfg.compile
 		)
 		self._batch_size = cfg.batch_size * (cfg.horizon+cfg.burn_in+1)
+		# self._batch_size = cfg.batch_size
 		self._num_eps = 0
 
 	@property
@@ -79,12 +81,12 @@ class Buffer():
 		# check if any done value is true, or 1.0
 		done = td.get('done')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
 		dt = td.get('dt').unsqueeze(-1).contiguous()
-		# h = td['h'].contiguous()
+		h = td['h'].contiguous()
 		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
-		return obs, action, reward, done, dt, is_first, task
+		return obs, action, h, reward, done, dt, is_first, task
 
 	def add(self, td):
 		"""Add an episode to the buffer."""
