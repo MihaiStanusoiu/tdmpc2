@@ -331,10 +331,13 @@ class TDMPC2(torch.nn.Module):
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
 		consistency_loss = 0
+		one_step_prediction_error = 0
 		for t, (_action, _next_z) in enumerate(zip(action.unbind(0), next_z.unbind(0))):
 			z = self.model.next(z, _action, task)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			zs[t+1] = z
+			if t == 0:
+				one_step_prediction_error = consistency_loss
 
 		# Predictions
 		_zs = zs[:-1]
@@ -379,6 +382,7 @@ class TDMPC2(torch.nn.Module):
 			"value_loss": value_loss,
 			# "pi_loss": pi_loss,
 			"total_loss": total_loss,
+			"one_step_prediction_error": one_step_prediction_error,
 			"grad_norm": grad_norm,
 			# "pi_grad_norm": pi_grad_norm,
 			"pi_scale": self.scale.value,
