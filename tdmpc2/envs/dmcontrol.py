@@ -200,7 +200,7 @@ class TimeStepToGymWrapper:
 		# timestamp = self.substeps * self.dm_env._physics.timestep()
 		time_step = self.env.step(action)
 		timestamp = self.env.control_timestep() * self.ts_norm
-		# actual_timestamp = self.dm_env._physics.data.time
+		actual_timestamp = self.dm_env._physics.data.time
 		# assert timestamp == actual_timestamp
 		info = {
 			'timestamp': timestamp
