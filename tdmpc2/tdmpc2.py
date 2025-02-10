@@ -29,7 +29,7 @@ class TDMPC2(torch.nn.Module):
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
-			{'params': self.model._dynamics.parameters()},
+			# {'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
@@ -285,7 +285,7 @@ class TDMPC2(torch.nn.Module):
 		self._prev_mean.copy_(mean)
 		return a.clamp(-1, 1)
 
-	def update_pi(self, zs, h, dt, task):
+	def update_pi(self, zs, hs, dt, task):
 		"""
 		Update policy using a sequence of latent states.
 
@@ -296,20 +296,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			float: Loss of the policy update.
 		"""
-		hs = [h]
-		pis = []
-		log_pis = []
-		for _, (z, t) in enumerate(zip(zs.unbind(0), dt.unbind(0))):
-			_, pi, log_pi, _ = self.model.pi(z, h, task)
-			with torch.no_grad():
-				_, h = self.model.rnn(z, pi, task=task, h=h, dt=t)
-			pis.append(pi)
-			log_pis.append(log_pi)
-			hs.append(h)
-		hs = hs[:-1]
-		pis = torch.stack(pis)
-		log_pis = torch.stack(log_pis)
-		hs = torch.stack(hs)
+		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
 
 		qs = self.model.Q(zs, pis, hs, task, return_type='avg', detach=True)
 		self.scale.update(qs[0])
@@ -321,12 +308,13 @@ class TDMPC2(torch.nn.Module):
 		pi_loss.backward()
 		pi_grad_norm = torch.nn.utils.clip_grad_norm_(self.model._pi.parameters(), self.cfg.grad_clip_norm)
 		self.pi_optim.step()
+		# For some reason, cudagraph prefers to see the zero grad after step
 		self.pi_optim.zero_grad(set_to_none=True)
 
 		return pi_loss.detach(), pi_grad_norm
 
 	@torch.no_grad()
-	def _td_target(self, next_z, h, reward, dt, task):
+	def _td_target(self, next_z, next_h, reward, dt, task):
 		"""
 		Compute the TD-target from a reward and the observation at the following time step.
 
@@ -337,20 +325,10 @@ class TDMPC2(torch.nn.Module):
 
 		Returns:
 			torch.Tensor: TD-target.
-		"""
-		hs = [h]
-		pis = []
-		for _, (z, t) in enumerate(zip(next_z, dt)):
-			pi = self.model.pi(z, h, task)[1]
-			_, h = self.model.rnn(z, pi, task=task, h=h, dt=t)
-			pis.append(pi)
-			hs.append(h)
-		hs = hs[:-1]
-		pis = torch.stack(pis)
-		hs = torch.stack(hs)
-
+				"""
+		pi = self.model.pi(next_z, next_h, task)[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
-		return reward + discount * self.model.Q(next_z, pis, hs, task, return_type='min', target=True)
+		return reward + discount * self.model.Q(next_z, pi, next_h, task, return_type='min', target=True)
 
 	@staticmethod
 	def _mask(value, mask):
@@ -424,6 +402,7 @@ class TDMPC2(torch.nn.Module):
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first)
 			ht = ht + self._mask(self.initial_h, _is_first)
+			# (z_{t+1}, h_{t+1}) = f(z_t, a_{t-1}, h_{t-1})
 			z, h = self.model.forward(z, _action, ht, task, dt=_dt)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			if t == 0:
@@ -451,7 +430,7 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_z, hs[1], reward, dt[1:], task)
+			td_targets = self._td_target(hs[1:], reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -470,8 +449,8 @@ class TDMPC2(torch.nn.Module):
 		)
 
 		# Update model
-		if self._first_update and not self.cfg.compile:
-			make_dot(total_loss, dict(list(self.model.named_parameters()))).view()
+		# if self._first_update and not self.cfg.compile:
+		# 	make_dot(total_loss, dict(list(self.model.named_parameters()))).view()
 		total_loss.backward()
 		grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm)
 		self.optim.step()
@@ -479,7 +458,7 @@ class TDMPC2(torch.nn.Module):
 
 		if not self.cfg.freeze_pi:
 			# Update policy
-			pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs[0].detach(), dt, task)
+			pi_loss, pi_grad_norm = self.update_pi(hs.detach(), task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()

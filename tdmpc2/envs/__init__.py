@@ -11,6 +11,10 @@ def missing_dependencies(task):
 	raise ValueError(f'Missing dependencies for task {task}; install dependencies to use this environment.')
 
 try:
+	from envs.loca import make_env as make_loca_env
+except Exception as e:
+	make_loca_env = missing_dependencies
+try:
 	from envs.pomdp_gym import make_env as make_pomdp_env
 except Exception as e:
 	make_pomdp_env = missing_dependencies
@@ -68,7 +72,7 @@ def make_multitask_env(cfg):
 	return env
 	
 
-def make_env(cfg):
+def make_env(cfg, mode='train'):
 	"""
 	Make an environment for TD-MPC2 experiments.
 	"""
@@ -83,6 +87,10 @@ def make_env(cfg):
 				env = fn(cfg)
 			except Exception as e:
 				pass
+		try:
+			env = make_loca_env(cfg, mode)
+		except Exception as e:
+			pass
 		if env is None:
 			raise ValueError(f'Failed to make environment "{cfg.task}": please verify that dependencies are installed and that the task exists.')
 		env = TensorWrapper(env)

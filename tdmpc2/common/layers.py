@@ -149,11 +149,17 @@ def enc(cfg, out={}):
 	"""
 	Returns a dictionary of encoders for each observation in the dict.
 	"""
+	# for k in cfg.obs_shape.keys():
+	# 	if k == 'state':
+	# 		out[k] = mlp(cfg.obs_shape[k][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
+	# 	elif k == 'rgb':
+	# 		out[k] = conv(cfg.obs_shape[k], cfg.num_channels, act=SimNorm(cfg))
+	# 	else:
+	# 		raise NotImplementedError(f"Encoder for observation type {k} not implemented.")
+	# return nn.ModuleDict(out)
+
+	# do not encode state
 	for k in cfg.obs_shape.keys():
 		if k == 'state':
-			out[k] = mlp(cfg.obs_shape[k][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
-		elif k == 'rgb':
-			out[k] = conv(cfg.obs_shape[k], cfg.num_channels, act=SimNorm(cfg))
-		else:
-			raise NotImplementedError(f"Encoder for observation type {k} not implemented.")
+			out[k] = nn.Identity()
 	return nn.ModuleDict(out)

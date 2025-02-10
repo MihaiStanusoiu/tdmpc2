@@ -25,13 +25,15 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
+		cfg.latent_dim = cfg.obs_shape['state'][0]
+		self.cfg.latent_dim = cfg.latent_dim
 		if cfg.rnn_type == 'cfc':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
 		elif cfg.rnn_type == 'cfc_pure':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.hidden_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False,
 							return_sequences=False)
@@ -39,7 +41,7 @@ class WorldModel(nn.Module):
 			self._rnn = LTC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
 		elif cfg.rnn_type == 'lstm':
 			self._rnn = nn.LSTM(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False)
-		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
@@ -69,8 +71,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'Dynamics', 'RNN Readout', 'Reward', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._encoder, self._rnn, self._dynamics, self._reward, self._pi, self._Qs]):
+		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
+		for i, m in enumerate([self._encoder, self._rnn, self._reward, self._pi, self._Qs]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -163,8 +165,8 @@ class WorldModel(nn.Module):
 		"""
 		Forward pass through the world model.
 		"""
-		_, h = self.rnn(z, a, task, h, dt=dt)
-		z_next = self.next(z, a, h, task)
+		z_next, h = self.rnn(z, a, task, h, dt=dt)
+		# z_next = self.next(z, a, h, task)
 		return z_next, h
 	
 	def reward(self, z, a, h, task=None):
