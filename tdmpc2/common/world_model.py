@@ -33,7 +33,7 @@ class WorldModel(nn.Module):
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
 		elif cfg.rnn_type == 'cfc_pure':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.hidden_dim,
+			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False,
 							return_sequences=False)

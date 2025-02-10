@@ -285,7 +285,7 @@ class TDMPC2(torch.nn.Module):
 		self._prev_mean.copy_(mean)
 		return a.clamp(-1, 1)
 
-	def update_pi(self, zs, hs, dt, task):
+	def update_pi(self, zs, hs, task):
 		"""
 		Update policy using a sequence of latent states.
 
@@ -393,17 +393,24 @@ class TDMPC2(torch.nn.Module):
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
+		hs_p = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
 		hs[0] = h
+		hs_p[0] = h
 		consistency_loss = 0
 		one_step_prediction_error = 0
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first)
 			ht = ht + self._mask(self.initial_h, _is_first)
+			ht_p = self._mask(hs_p[t], 1.0 - _is_first)
+			ht_p = ht_p + self._mask(self.initial_h, _is_first)
 			# (z_{t+1}, h_{t+1}) = f(z_t, a_{t-1}, h_{t-1})
 			z, h = self.model.forward(z, _action, ht, task, dt=_dt)
+			with torch.no_grad():
+				_, h_p = self.model.forward(_next_z, _action, ht_p, task, dt=_dt)
+				hs_p[t+1] = h_p
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			if t == 0:
 				one_step_prediction_error = consistency_loss
@@ -430,7 +437,7 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(hs[1:], reward, dt[1:], task)
+			td_targets = self._td_target(next_z, hs_p[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -458,7 +465,7 @@ class TDMPC2(torch.nn.Module):
 
 		if not self.cfg.freeze_pi:
 			# Update policy
-			pi_loss, pi_grad_norm = self.update_pi(hs.detach(), task)
+			pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs.detach(), task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
