@@ -24,10 +24,10 @@ class TDMPC2(torch.nn.Module):
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
 		self.uncompiled_model = self.model
-		if self.cfg.compile:
-			self.model = torch.compile(self.model, mode="reduce-overhead")
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
-			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
+			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
 			# {'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
@@ -85,7 +85,7 @@ class TDMPC2(torch.nn.Module):
 			fp (str): Filepath to save state dict to.
 		"""
 		torch.save({
-			"model": self.uncompiled_model.state_dict(),
+			"model": self.model.state_dict(),
 			"wm_optim": self.optim.state_dict(),
 			"pi_optim": self.pi_optim.state_dict(),
 			"metrics": metrics,
@@ -157,9 +157,9 @@ class TDMPC2(torch.nn.Module):
 			return
 		# load_sd_hook(self.model, state_dict, "_Qs.")
 		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
-		self.uncompiled_model.load_state_dict(state_dict)
-		if self.cfg.compile:
-			self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
+		self.model.load_state_dict(state_dict)
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
 		return
 
 	@property
@@ -191,7 +191,7 @@ class TDMPC2(torch.nn.Module):
 			if info.get("timestamp") is not None:
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(z, t0=t0, h=h, dt=tensor_dt, eval_mode=eval_mode, task=task)
+			a = self.plan(z, t0=torch.tensor(t0, device=self.device), h=h, dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 			_, h = self.model.rnn(z, a.unsqueeze(0), task, h, dt=tensor_dt)
 		else:
 			z = self.model.encode(obs, task)
@@ -211,7 +211,7 @@ class TDMPC2(torch.nn.Module):
 		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], h, task, return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, z, t0=False, h=None, dt=None, eval_mode=False, task=None):
+	def _plan(self, z, t0=torch.tensor(False), h=None, dt=None, eval_mode=torch.tensor(False), task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 

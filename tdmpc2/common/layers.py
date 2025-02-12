@@ -161,5 +161,5 @@ def enc(cfg, out={}):
 	# do not encode state
 	for k in cfg.obs_shape.keys():
 		if k == 'state':
-			out[k] = nn.Identity()
+			out[k] = nn.Sequential(nn.Identity())
 	return nn.ModuleDict(out)
