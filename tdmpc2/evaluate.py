@@ -2,6 +2,7 @@ import os
 import time
 
 from common.logger import Logger
+from common.plotting import plot_state_wm_state_correlation
 
 os.environ['MUJOCO_GL'] = 'egl'
 import warnings
@@ -46,6 +47,7 @@ def evaluate(cfg: dict):
 	assert torch.cuda.is_available()
 	assert cfg.eval_episodes > 0, 'Must evaluate at least 1 episode.'
 	cfg = parse_cfg(cfg)
+	seed = cfg.seed
 	set_seed(cfg.seed)
 	print(colored(f'Task: {cfg.task}', 'blue', attrs=['bold']))
 	print(colored(f'Model size: {cfg.get("model_size", "default")}', 'blue', attrs=['bold']))
@@ -77,8 +79,14 @@ def evaluate(cfg: dict):
 	for task_idx, task in enumerate(tasks):
 		if not cfg.multitask:
 			task_idx = None
-		ep_rewards, ep_successes = [], []
+		ep_rewards, ep_successes, states, wm_states = [], [], np.array([]), np.array([])
+		state, wm_state = [], []
 		for i in range(cfg.eval_episodes):
+			set_seed(seed)
+			seed += 1
+			# Make environment
+			env = make_env(cfg)
+
 			obs, done, ep_reward, info , t, hidden = env.reset(task_idx=task_idx), False, 0, {'timestamp': env.get_timestep()}, 0, agent.initial_h.detach()
 			times = []
 			if cfg.save_video:
@@ -86,6 +94,8 @@ def evaluate(cfg: dict):
 			while not done:
 				# measure and log inference time
 				start_time = time.time_ns()
+				state.append(obs.numpy())
+				wm_state.append(hidden.cpu().numpy())
 				action, hidden = agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
 				end_time = time.time_ns()
 				times.append((end_time - start_time) // 1_000_000)
@@ -108,6 +118,8 @@ def evaluate(cfg: dict):
 			logger.log(metrics, "evaluate_ep")
 			if cfg.save_video:
 				logger.video.save(i, key=f"evaluate/videos/{task}")
+		states = np.vstack(state)
+		wm_states = np.vstack(wm_state)
 		ep_rewards = np.mean(ep_rewards)
 		ep_successes = np.mean(ep_successes)
 		metrics = dict(
@@ -116,6 +128,11 @@ def evaluate(cfg: dict):
 			episode_success=ep_successes,
 		)
 		logger.log(metrics, "evaluate_task")
+		if cfg.plot_state_correlation:
+			fig, states, combinations = plot_state_wm_state_correlation(states, wm_states, task, cfg.work_dir or None)
+			if 'cartpole' in cfg.task:
+				state_labels = ["X", "cos(theta)", "sin(theta)", "X_dot", "theta_dot"]
+			logger.log_state_wm_prediction(fig, state_labels, states, combinations, f"statistics/state_prediction_correlation")
 		if cfg.multitask:
 			scores.append(ep_successes*100 if task.startswith('mw-') else ep_rewards/10)
 		print(colored(f'  {task:<22}' \

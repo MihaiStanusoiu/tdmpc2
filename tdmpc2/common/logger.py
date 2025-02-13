@@ -309,6 +309,28 @@ class Logger:
             print(colored(f'  {"metaworld":<22}\tR: {metaworld_reward:.01f}', 'yellow', attrs=['bold']))
             print(colored(f'  {"metaworld":<22}\tS: {metaworld_success:.02f}', 'yellow', attrs=['bold']))
 
+    def log_state_wm_prediction(self, fig, state_labels, states, predicted_states_best_fit, key="state_prediction_correlation"):
+        # log received fig
+        self._wandb.log({key: fig})
+
+        # Log Data to W&B
+        table = self._wandb.Table(columns=["State", "True Value", "Best Fit Value"])
+
+        for i in range(states.shape[0]):
+            for j in range(states.shape[1]):
+                table.add_data(state_labels[j], states[i, j], predicted_states_best_fit[i, j])
+
+        self._wandb.log({"state_predictions": table})
+
+        # Optional: Log scatter plots directly
+        for i, label in enumerate(state_labels):
+            self._wandb.log({
+                f"{key}/{label}": self._wandb.plot.scatter(
+                    table, x="True Value", y="Best Fit Value",
+                    title=f"Scatter Plot for {label}"
+                )
+            })
+
     def log(self, d, category="train"):
         assert category in CAT_TO_COLOR.keys(), f"invalid category: {category}"
         if self._wandb:
