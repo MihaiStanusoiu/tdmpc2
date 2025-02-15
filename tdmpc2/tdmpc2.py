@@ -382,10 +382,8 @@ class TDMPC2(torch.nn.Module):
 		# h = prev_hidden[0].detach()
 		for _, (_a, _obs, _dt, _is_first) in enumerate(
 					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
-			_h = self._mask(h, 1.0 - _is_first)
-			_h = _h + self._mask(self.initial_h, _is_first)
 			z = self.model.encode(_obs, task)
-			_, h = self.model.rnn(z.detach(), _a, task, _h, _dt)
+			_, h = self.model.rnn(z.detach(), _a, task, h, _dt)
 
 		# Prepare for update
 		self.model.train()
@@ -398,18 +396,13 @@ class TDMPC2(torch.nn.Module):
 		z = self.model.encode(obs[0], task)
 		zs[0] = z
 		hs[0] = h
-		hs_p[0] = h
 		consistency_loss = 0
 		one_step_prediction_error = 0
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
-			ht = self._mask(hs[t], 1.0 - _is_first)
-			ht = ht + self._mask(self.initial_h, _is_first)
-			ht_p = self._mask(hs_p[t], 1.0 - _is_first)
-			ht_p = ht_p + self._mask(self.initial_h, _is_first)
 			# (z_{t+1}, h_{t+1}) = f(z_t, a_{t-1}, h_{t-1})
-			z, h = self.model.forward(z, _action, ht, task, dt=_dt)
+			z, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
 			with torch.no_grad():
-				_, h_p = self.model.forward(_next_z, _action, ht_p, task, dt=_dt)
+				_, h_p = self.model.forward(_next_z, _action, hs_p[t], task, dt=_dt)
 				hs_p[t+1] = h_p
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			if t == 0:
