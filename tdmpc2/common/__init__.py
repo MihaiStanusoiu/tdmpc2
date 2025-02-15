@@ -1,4 +1,10 @@
 MODEL_SIZE = { # parameters (M)
+	'cartpole': {
+			  'mlp_dim': 128,
+			  'latent_dim': 128,
+			  'num_enc_layers': 2,
+			  'num_q': 2,
+			  'grad_clip_norm': 10},
 	0.5: {'enc_dim': 256,
 		  'mlp_dim': 192,
 		  'hidden_dim': 32,
