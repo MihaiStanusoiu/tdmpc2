@@ -169,7 +169,7 @@ class OnlineTrainer(Trainer):
 				is_first = True
 				h = self.agent.initial_h.detach()
 				h = self.agent.forward_rnn(obs, action, h, info.get('timestamp') or None)
-				self._tds = [self.to_td(obs, action, h=h, done=False, dt=info.get("timestamp") or None, is_first=True)]
+				self._tds = [self.to_td(obs, action.squeeze(0), h=h, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:

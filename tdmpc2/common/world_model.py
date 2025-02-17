@@ -137,11 +137,11 @@ class WorldModel(nn.Module):
 	def rnn(self, z, a, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
 		if a.dim() != 3:
 			a = a.unsqueeze(0)
+		z = torch.cat([z, a], dim=-1)
 		if h is None:
 			h = self.initial_h.expand(z.shape[1], -1)
 		# if dt is None:

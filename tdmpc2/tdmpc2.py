@@ -164,10 +164,10 @@ class TDMPC2(torch.nn.Module):
 
 	@torch.no_grad()
 	def forward_rnn(self, obs, action, h, dt: float):
-		tensor_dt = torch.tensor(dt, dtype=torch.float, device=self.agent.device,
+		tensor_dt = torch.tensor(dt, dtype=torch.float, device=self.device,
 								 requires_grad=False).reshape((1, 1))
-		_, h = self.agent.model.rnn(obs.to(self.agent.device).unsqueeze(0),
-									action.to(self.agent.device).unsqueeze(0), h=h, dt=tensor_dt)
+		_, h = self.model.rnn(self.model.encode(obs.to(self.device).unsqueeze(0)),
+									action.to(self.device).unsqueeze(0), h=h, dt=tensor_dt)
 		return h
 
 	@property
@@ -405,6 +405,9 @@ class TDMPC2(torch.nn.Module):
 		with torch.no_grad():
 			next_z = self.model.encode(obs[1:], task)
 
+		# Prepare for update
+		self.model.train()
+
 		# Encoding memory
 		h = self.initial_h.repeat(self.cfg.batch_size, 1)
 
@@ -416,19 +419,18 @@ class TDMPC2(torch.nn.Module):
 			z = self.model.encode(_obs, task)
 			_, h = self.model.rnn(z.detach(), _a, task, _h, _dt)
 
-		# Prepare for update
-		self.model.train()
 
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 
 		z = self.model.encode(obs[0], task)
+		_, h = self.model.rnn(z, action[0], task, h, dt[0])
 		zs[0] = z
 		hs[0] = h
 		consistency_loss = 0
 		one_step_prediction_error = 0
-		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
+		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action[1:].unbind(0), next_z.unbind(0), dt[1:].unbind(0), is_first.unbind(0))):
 			ht = self._mask(hs[t], 1.0 - _is_first)
 			ht = ht + self._mask(self.initial_h, _is_first)
 			z, h = self.model.forward(z, _action, ht, task, dt=_dt)
@@ -453,8 +455,8 @@ class TDMPC2(torch.nn.Module):
 		# 	q_discrepancy_t = q_discrepancy[0]
 		# 	q_discrepancy_H = q_discrepancy[-1]
 
-		qs = self.model.Q(_zs, action, _hs, task, return_type='all')
-		reward_preds = self.model.reward(_zs, action, _hs, task)
+		qs = self.model.Q(_zs, action[1:], _hs, task, return_type='all')
+		reward_preds = self.model.reward(_zs, action[1:], _hs, task)
 
 		# Compute targets
 		with torch.no_grad():
