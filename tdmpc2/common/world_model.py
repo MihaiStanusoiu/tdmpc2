@@ -159,13 +159,24 @@ class WorldModel(nn.Module):
 		z_next = self._dynamics(z)
 		return z_next
 
-	def forward(self, z, a, h, task=None, dt=None):
+	@property
+	def forward(self):
+		_forward_val = getattr(self, "_forward_val", None)
+		if _forward_val is not None:
+			return _forward_val
+		if self.cfg.compile:
+			forward = torch.compile(self._forward, mode="reduce-overhead")
+		else:
+			forward = self._forward
+		self._forward_val = forward
+		return self._forward_val
+
+	def _forward(self, z, a, h, task=None, dt=None):
 		"""
 		Forward pass through the world model.
 		"""
 		z_next = self.next(z, a, h, task)
 		_, h = self.rnn(z_next, a, task, h, dt=dt)
-		z_next = self.next(z, a, h, task)
 		return z_next, h
 	
 	def reward(self, z, a, h, task=None):
