@@ -162,6 +162,14 @@ class TDMPC2(torch.nn.Module):
 			self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
 		return
 
+	@torch.no_grad()
+	def forward_rnn(self, obs, action, h, dt: float):
+		tensor_dt = torch.tensor(dt, dtype=torch.float, device=self.agent.device,
+								 requires_grad=False).reshape((1, 1))
+		_, h = self.agent.model.rnn(obs.to(self.agent.device).unsqueeze(0),
+									action.to(self.agent.device).unsqueeze(0), h=h, dt=tensor_dt)
+		return h
+
 	@property
 	def initial_h(self):
 		if self.cfg.learned_init_h:
@@ -192,11 +200,10 @@ class TDMPC2(torch.nn.Module):
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
 			torch.compiler.cudagraph_mark_step_begin()
 			a = self.plan(z, t0=t0, h=h, dt=tensor_dt, eval_mode=eval_mode, task=task)
-			_, h = self.model.rnn(z, a.unsqueeze(0), task, h, dt=tensor_dt)
 		else:
 			z = self.model.encode(obs, task)
 			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
-		return a.cpu(), h
+		return a.cpu()
 
 	@torch.no_grad()
 	def _estimate_value(self, z, h, actions, task, dt=None):

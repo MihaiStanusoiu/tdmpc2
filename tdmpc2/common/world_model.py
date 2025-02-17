@@ -163,7 +163,8 @@ class WorldModel(nn.Module):
 		"""
 		Forward pass through the world model.
 		"""
-		_, h = self.rnn(z, a, task, h, dt=dt)
+		z_next = self.next(z, a, h, task)
+		_, h = self.rnn(z_next, a, task, h, dt=dt)
 		z_next = self.next(z, a, h, task)
 		return z_next, h
 	

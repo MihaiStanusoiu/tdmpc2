@@ -32,6 +32,7 @@ class OnlineTrainer(Trainer):
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestamp': self.env.get_timestep()}
+			action = torch.zeros((1, self.env.action_space.shape[0]))
 			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
@@ -39,10 +40,11 @@ class OnlineTrainer(Trainer):
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
 				start_time = time_ns()
-				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action = self.agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
 				end_time = time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
+				hidden = self.agent.forward_rnn(obs, action, hidden, info.get('timestamp') or None)
 				ep_reward += reward
 				t += 1
 				if self.cfg.save_video:
@@ -162,10 +164,12 @@ class OnlineTrainer(Trainer):
 						self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
+				action = torch.zeros((1, self.env.action_space.shape[0]))
 				info = {'timestamp': self.env.get_timestep()}
 				is_first = True
 				h = self.agent.initial_h.detach()
-				self._tds = [self.to_td(obs, h=h, done=False, dt=info.get("timestamp") or None, is_first=True)]
+				h = self.agent.forward_rnn(obs, action, h, info.get('timestamp') or None)
+				self._tds = [self.to_td(obs, action, h=h, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
@@ -182,10 +186,11 @@ class OnlineTrainer(Trainer):
 						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
 							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
-				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
+				action = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
+			h_next = self.agent.forward_rnn(obs, action, h, info.get('timestamp') or None)
 			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, h=None, is_first=False))
 			h = h_next
 
