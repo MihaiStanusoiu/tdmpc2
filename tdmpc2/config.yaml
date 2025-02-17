@@ -21,7 +21,8 @@ checkpoint: ???
 id: ???
 eval_episodes: 10
 eval_freq: 5000
-use_tensorboard: True
+use_tensorboard: False
+plot_state_correlation: False
 
 # training
 freeze_pi: false
@@ -34,7 +35,7 @@ rho: 0.5
 lr: 3e-4
 burn_in: 10
 enc_lr_scale: 0.3
-grad_clip_norm: 1000
+grad_clip_norm: 10
 tau: 0.01
 discount_denom: 5
 discount_min: 0.95

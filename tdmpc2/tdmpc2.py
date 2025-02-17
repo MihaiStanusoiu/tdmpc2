@@ -383,9 +383,6 @@ class TDMPC2(torch.nn.Module):
 		with torch.no_grad():
 			next_z = self.model.encode(obs[1:], task)
 
-		# Prepare for update
-		self.model.train()
-
 		# Encoding memory
 		h = self.initial_h.repeat(self.cfg.batch_size, 1)
 
@@ -395,6 +392,8 @@ class TDMPC2(torch.nn.Module):
 			z = self.model.encode(_obs, task)
 			_, h = self.model.rnn(z.detach(), _a, task, h, _dt)
 
+		# Prepare for update
+		self.model.train()
 
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
@@ -406,7 +405,9 @@ class TDMPC2(torch.nn.Module):
 		hs[0] = h
 		consistency_loss = 0
 		one_step_prediction_error = 0
-		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action[1:].unbind(0), next_z.unbind(0), dt[1:].unbind(0), is_first.unbind(0))):
+		next_actions = action[1:]
+		next_dt = dt[1:]
+		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(next_actions.unbind(0), next_z.unbind(0), next_dt.unbind(0), is_first.unbind(0))):
 			z, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			if t == 0:
@@ -434,7 +435,7 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_z, hs[1:], reward, dt[1:], task)
+			td_targets = self._td_target(next_z, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0

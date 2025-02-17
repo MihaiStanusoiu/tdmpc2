@@ -83,9 +83,8 @@ class OnlineTrainer(Trainer):
 		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
-			h=h if h is not None else self.agent.initial_h,
 			reward=reward.unsqueeze(0),
-			done=torch.tensor(done, dtype=torch.float).unsqueeze(0),
+			done=torch.tensor([done], dtype=torch.float).unsqueeze(0),
 			dt=dt.unsqueeze(0),
 			is_first=torch.ones((1, 1), dtype=torch.float) if is_first else torch.zeros((1, 1), dtype=torch.float),
 		batch_size=(1,))

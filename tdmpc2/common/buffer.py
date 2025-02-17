@@ -80,7 +80,6 @@ class Buffer():
 		# check if any done value is true, or 1.0
 		done = td.get('done')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
 		dt = td.get('dt').unsqueeze(-1).contiguous()
-		h = td['h'].contiguous()
 		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)
 		if task is not None:
