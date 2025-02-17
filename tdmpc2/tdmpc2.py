@@ -24,8 +24,8 @@ class TDMPC2(torch.nn.Module):
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
 		self.uncompiled_model = self.model
-		if self.cfg.compile:
-			self.model = torch.compile(self.model, mode="reduce-overhead")
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
@@ -85,7 +85,7 @@ class TDMPC2(torch.nn.Module):
 			fp (str): Filepath to save state dict to.
 		"""
 		torch.save({
-			"model": self.uncompiled_model.state_dict(),
+			"model": self.model.state_dict(),
 			"wm_optim": self.optim.state_dict(),
 			"pi_optim": self.pi_optim.state_dict(),
 			"metrics": metrics,
@@ -157,9 +157,9 @@ class TDMPC2(torch.nn.Module):
 			return
 		# load_sd_hook(self.model, state_dict, "_Qs.")
 		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
-		self.uncompiled_model.load_state_dict(state_dict)
-		if self.cfg.compile:
-			self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
+		self.model.load_state_dict(state_dict)
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
 		return
 
 	@torch.no_grad()
@@ -414,10 +414,8 @@ class TDMPC2(torch.nn.Module):
 		# h = prev_hidden[0].detach()
 		for _, (_a, _obs, _dt, _is_first) in enumerate(
 					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
-			_h = self._mask(h, 1.0 - _is_first)
-			_h = _h + self._mask(self.initial_h, _is_first)
 			z = self.model.encode(_obs, task)
-			_, h = self.model.rnn(z.detach(), _a, task, _h, _dt)
+			_, h = self.model.rnn(z.detach(), _a, task, h, _dt)
 
 
 		# Latent rollout
@@ -431,9 +429,7 @@ class TDMPC2(torch.nn.Module):
 		consistency_loss = 0
 		one_step_prediction_error = 0
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action[1:].unbind(0), next_z.unbind(0), dt[1:].unbind(0), is_first.unbind(0))):
-			ht = self._mask(hs[t], 1.0 - _is_first)
-			ht = ht + self._mask(self.initial_h, _is_first)
-			z, h = self.model.forward(z, _action, ht, task, dt=_dt)
+			z, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			if t == 0:
 				one_step_prediction_error = consistency_loss
