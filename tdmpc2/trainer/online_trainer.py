@@ -26,12 +26,16 @@ class OnlineTrainer(Trainer):
 			total_time=time() - self._start_time,
 		)
 
+	@torch.no_grad()
 	def eval(self):
 		"""Evaluate a TD-MPC2 agent."""
 		ep_rewards, ep_successes, ep_runtime_means, ep_runtime_stds = [], [], [], []
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestamp': self.env.get_timestep()}
+			tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
+									 requires_grad=False).reshape((1, 1))
+			h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), hidden, dt=tensor_dt)
 			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
@@ -39,10 +43,13 @@ class OnlineTrainer(Trainer):
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
 				start_time = time_ns()
-				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action, hidden = self.agent.act(h_hat, t0=t==0, h=hidden, info=info, eval_mode=True)
 				end_time = time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
+				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
+										 requires_grad=False).reshape((1, 1))
+				h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), hidden, tensor_dt)
 				ep_reward += reward
 				t += 1
 				if self.cfg.save_video:
@@ -164,6 +171,10 @@ class OnlineTrainer(Trainer):
 				info = {'timestamp': self.env.get_timestep()}
 				is_first = True
 				h = self.agent.initial_h.detach()
+				with torch.no_grad():
+					tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
+											 requires_grad=False).reshape((1, 1))
+					h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device)).unsqueeze(0), h, tensor_dt)
 				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
@@ -180,11 +191,18 @@ class OnlineTrainer(Trainer):
 						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
 						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
-							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
-				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
+							for t, (prev_obs, prev_act, prev_dt) in enumerate(zip(prev_obs, prev_act, prev_dt)):
+								h_hat = self.agent.model.hmm(self.agent.model.encode(prev_obs), h, dt=prev_dt)
+								h = self.agent.model.rnn(h_hat, prev_act)
+
+				action, h_next = self.agent.act(h_hat, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
+			with torch.no_grad():
+				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
+										 requires_grad=False).reshape((1, 1))
+				h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), h_next, tensor_dt)
 			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, h, is_first=False))
 			h = h_next
 

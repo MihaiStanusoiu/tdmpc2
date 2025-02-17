@@ -25,13 +25,25 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		cfg.latent_dim = cfg.obs_shape['state'][0]
-		self.cfg.latent_dim = cfg.latent_dim
+		# cfg.latent_dim = cfg.obs_shape['state'][0]
+		# self.cfg.latent_dim = cfg.latent_dim
 		if cfg.rnn_type == 'cfc':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
+			# self._hmm = CfC(cfg.latent_dim, cfg.hidden_dim, cfg.hidden_dim, cfg.hidden_dim,
+			# 				backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+			# 				backbone_dropout=cfg.backbone_dropout, batch_first=False,
+			# 				return_sequences=False)
+			# self._hmm = nn.Linear(cfg.latent_dim + cfg.hidden_dim, cfg.hidden_dim)
+			# self._hmm = layers.mlp(cfg.latent_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.hidden_dim, act=None)
+			self._hmm = CfC(cfg.latent_dim, cfg.hidden_dim, cfg.hidden_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
+			self._rnn = CfC(cfg.action_dim, cfg.hidden_dim, cfg.hidden_dim,
+							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+							backbone_dropout=cfg.backbone_dropout, batch_first=False,
+							return_sequences=False)
+			# self._dynamics = nn.Linear(cfg.hidden_dim, cfg.latent_dim)
+			self._dynamics = layers.mlp(cfg.hidden_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=None)
 		elif cfg.rnn_type == 'cfc_pure':
 			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
@@ -45,9 +57,9 @@ class WorldModel(nn.Module):
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		self._reward = layers.mlp(cfg.latent_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
+		self._pi = layers.mlp(cfg.hidden_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+		self._Qs = layers.Ensemble([layers.mlp(cfg.hidden_dim + cfg.action_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
 
@@ -71,8 +83,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._encoder, self._rnn, self._reward, self._pi, self._Qs]):
+		modules = ['Encoder', 'RNN', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
+		for i, m in enumerate([self._hmm, self._rnn, self._dynamics, self._reward, self._pi, self._Qs]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -125,31 +137,34 @@ class WorldModel(nn.Module):
 			emb = emb.repeat(x.shape[0], 1)
 		return torch.cat([x, emb], dim=-1)
 
-	def encode(self, obs, task=None):
+	def encode(self, obs):
 		"""
 		Encodes an observation into its latent representation.
-		This implementation assumes a single state-based observation.
 		"""
-		if self.cfg.multitask:
-			obs = self.task_emb(obs, task)
 		if self.cfg.obs == 'rgb' and obs.ndim == 5:
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
 		return self._encoder[self.cfg.obs](obs)
 
-	def rnn(self, z, a, task=None, h=None, dt=None):
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
+	def hmm(self, z, h, dt=None):
+		"""
+		Encodes an observation into its latent representation.
+		This implementation assumes a single state-based observation.
+		"""
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
+		h_hat, _ = self._hmm(z, h, dt)
+		return h_hat
+
+	def rnn(self, h_hat, a, dt=None):
 		if a.dim() != 3:
 			a = a.unsqueeze(0)
-		if h is None:
-			h = self.initial_h.expand(z.shape[1], -1)
 		# if dt is None:
 		# 	dt = torch.ones((z.shape[0], z.shape[1], 1), device=h.device, requires_grad=False)
-		readout, h = self._rnn(z, h, dt)
-		return readout, h
+		readout, _ = self._rnn(a, h_hat, dt)
+		return readout
+
+	def dynamics(self, h):
+		return self._dynamics(h)
 
 	def next(self, z, a, h, task=None):
 		"""
@@ -169,28 +184,21 @@ class WorldModel(nn.Module):
 		# z_next = self.next(z, a, h, task)
 		return z_next, h
 	
-	def reward(self, z, a, h, task=None):
+	def reward(self, h):
 		"""
 		Predicts instantaneous (single-step) reward.
 		"""
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-		z = torch.cat([z, a, h], dim=-1)
-		return self._reward(z)
+		x = self.dynamics(h)
+		return self._reward(x)
 
-	def pi(self, z, h, task=None):
+	def pi(self, h_hat, task=None):
 		"""
 		Samples an action from the policy prior.
 		The policy prior is a Gaussian distribution with
 		mean and (log) std predicted by a neural network.
 		"""
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-
-		z = torch.cat([z, h], dim=-1)
-
 		# Gaussian policy prior
-		mu, log_std = self._pi(z).chunk(2, dim=-1)
+		mu, log_std = self._pi(h_hat).chunk(2, dim=-1)
 		log_std = math.log_std(log_std, self.log_std_min, self.log_std_dif)
 		eps = torch.randn_like(mu)
 
@@ -208,7 +216,7 @@ class WorldModel(nn.Module):
 
 		return mu, pi, log_pi, log_std
 
-	def Q(self, z, a, h, task=None, return_type='min', target=False, detach=False):
+	def Q(self, h_hat, a, task=None, return_type='min', target=False, detach=False):
 		"""
 		Predict state-action value.
 		`return_type` can be one of [`min`, `avg`, `all`]:
@@ -219,10 +227,8 @@ class WorldModel(nn.Module):
 		"""
 		assert return_type in {'min', 'avg', 'all'}
 
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
 
-		z = torch.cat([z, a, h], dim=-1)
+		z = torch.cat([h_hat, a], dim=-1)
 		if target:
 			qnet = self._target_Qs
 		elif detach:
