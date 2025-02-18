@@ -32,10 +32,10 @@ class OnlineTrainer(Trainer):
 		ep_rewards, ep_successes, ep_runtime_means, ep_runtime_stds = [], [], [], []
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
-			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestamp': self.env.get_timestep()}
+			obs, done, ep_reward, t, hidden, h_hat, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(), self.agent.initial_h.detach(),  {'timestamp': self.env.get_timestep()}
 			tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
 									 requires_grad=False).reshape((1, 1))
-			h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), hidden, dt=tensor_dt)
+			_, h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), hidden, h_hat, dt=tensor_dt)
 			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
@@ -43,13 +43,14 @@ class OnlineTrainer(Trainer):
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
 				start_time = time_ns()
-				action, hidden = self.agent.act(h_hat, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action = self.agent.act(obs, t0=t==0, h=hidden, h_hat=h_hat, info=info, eval_mode=True)
 				end_time = time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
 										 requires_grad=False).reshape((1, 1))
-				h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), hidden, tensor_dt)
+				_, hidden = self.agent.model.rnn(h_hat, action.to(self.agent.device).unsqueeze(0), hidden, dt=tensor_dt)
+				_, h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), hidden, h_hat, tensor_dt)
 				ep_reward += reward
 				t += 1
 				if self.cfg.save_video:
@@ -171,10 +172,11 @@ class OnlineTrainer(Trainer):
 				info = {'timestamp': self.env.get_timestep()}
 				is_first = True
 				h = self.agent.initial_h.detach()
+				h_hat = self.agent.initial_h.detach()
 				with torch.no_grad():
 					tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
 											 requires_grad=False).reshape((1, 1))
-					h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device)).unsqueeze(0), h, tensor_dt)
+					_, h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device)).unsqueeze(0), h, h_hat, tensor_dt)
 				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
@@ -182,6 +184,7 @@ class OnlineTrainer(Trainer):
 				if self.cfg.warmup_h:
 					# h warmup
 					h = self.agent.initial_h.detach()
+					h_hat = self.agent.initial_h.detach()
 					if len(self._tds) > 1:
 						burn_in_tds = self._tds[-self.cfg.burn_in:-1]
 						prev_obs = [td['obs'] for td in burn_in_tds]
@@ -192,19 +195,14 @@ class OnlineTrainer(Trainer):
 						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
 							for t, (prev_obs, prev_act, prev_dt) in enumerate(zip(prev_obs, prev_act, prev_dt)):
-								h_hat = self.agent.model.hmm(self.agent.model.encode(prev_obs), h, dt=prev_dt)
-								h = self.agent.model.rnn(h_hat, prev_act)
+								_, h_hat = self.agent.model.hmm(self.agent.model.encode(prev_obs), h, h_hat, dt=prev_dt)
+								_, h = self.agent.model.rnn(h_hat, prev_act, h)
 
-				action, h_next = self.agent.act(h_hat, t0=len(self._tds)==1, h=h, info=info)
+				action = self.agent.act(obs, t0=len(self._tds)==1, h=h, h_hat=h_hat, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			with torch.no_grad():
-				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.agent.device,
-										 requires_grad=False).reshape((1, 1))
-				h_hat = self.agent.model.hmm(self.agent.model.encode(obs.to(self.agent.device).unsqueeze(0)), h_next, tensor_dt)
 			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, h, is_first=False))
-			h = h_next
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps and self.buffer.num_eps > 0:
