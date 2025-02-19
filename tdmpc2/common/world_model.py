@@ -25,7 +25,7 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		# obs_dim = cfg.obs_shape['state'][0]
+		obs_dim = cfg.obs_shape['state'][0]
 		# cfg.latent_dim = cfg.obs_shape['state'][0]
 		# self.cfg.latent_dim = cfg.latent_dim
 		if cfg.rnn_type == 'cfc':
@@ -35,15 +35,16 @@ class WorldModel(nn.Module):
 			# 				return_sequences=False)
 			# self._hmm = nn.Linear(cfg.latent_dim + cfg.hidden_dim, cfg.hidden_dim)
 			# self._hmm = layers.mlp(cfg.latent_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.hidden_dim, act=None)
-			self._hmm = CfC(cfg.latent_dim + cfg.hidden_dim, cfg.hidden_dim, cfg.latent_dim,
+			self._hmm = CfC(obs_dim + cfg.action_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
-			# self._hmm = layers.mlp(obs_dim + cfg.hidden_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=SimNorm)
-			self._rnn = CfC(cfg.action_dim + cfg.hidden_dim, cfg.hidden_dim, cfg.latent_dim,
-							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
-							backbone_dropout=cfg.backbone_dropout, batch_first=False,
-							return_sequences=False)
+			self._posterior = NormedLinear(cfg.latent_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
+			self._rnn = layers.mlp(cfg.latent_dim + cfg.action_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=SimNorm(cfg))
+			# self._rnn = CfC(cfg.latent_dim + cfg.action_dim, cfg.hidden_dim, cfg.latent_dim,
+			# 				backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+			# 				backbone_dropout=cfg.backbone_dropout, batch_first=False,
+			# 				return_sequences=False)
 			# self._dynamics = nn.Linear(cfg.hidden_dim, cfg.latent_dim)
 			# self.prior = layers.mlp(cfg.hidden_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=None)
 			# self._dynamics = layers.mlp(cfg.hidden_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=None)
@@ -86,8 +87,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'HMM', 'RNN', 'Reward', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._encoder, self._hmm, self._rnn, self._reward, self._pi, self._Qs]):
+		modules = ['HMM', 'RNN', 'Reward', 'Policy prior', 'Q-functions']
+		for i, m in enumerate([self._hmm, self._rnn, self._reward, self._pi, self._Qs]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -148,29 +149,53 @@ class WorldModel(nn.Module):
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
 		return self._encoder[self.cfg.obs](obs)
 
-	def hmm(self, z, h, h_hat, dt=None):
+	@property
+	def hmm(self):
+		_hmm_val = getattr(self, "_hmm_val", None)
+		if _hmm_val is not None:
+			return _hmm_val
+		if self.cfg.compile:
+			hmm = torch.compile(self._f_hmm, mode="reduce-overhead")
+		else:
+			hmm = self._f_hmm
+		self._hmm_val = hmm
+		return self._hmm_val
+
+	@property
+	def rnn(self):
+		_rnn_val = getattr(self, "_rnn_val", None)
+		if _rnn_val is not None:
+			return _rnn_val
+		if self.cfg.compile:
+			rnn = torch.compile(self._f_rnn, mode="reduce-overhead")
+		else:
+			rnn = self._f_rnn
+		self._rnn_val = rnn
+		return self._rnn_val
+
+
+	def _f_hmm(self, obs, a, h, dt=None):
 		"""
 		Encodes an observation into its latent representation.
 		This implementation assumes a single state-based observation.
 		"""
-		if z.dim() != 3:
-			z = z.unsqueeze(0)
-		if h.dim() != 3:
-			h = h.unsqueeze(0)
-		z = torch.cat([z, h], dim=-1)
-		logits, h_hat = self._hmm(z, h_hat, dt)
-		return logits, h_hat
-
-	def rnn(self, h_hat, a, h, dt=None):
-		if h_hat.dim() != 3:
-			h_hat = h_hat.unsqueeze(0)
+		if obs.dim() != 3:
+			obs = obs.unsqueeze(0)
 		if a.dim() != 3:
 			a = a.unsqueeze(0)
-		a = torch.cat([a, h_hat], dim=-1)
-		# if dt is None:
-		# 	dt = torch.ones((z.shape[0], z.shape[1], 1), device=h.device, requires_grad=False)
-		logits, h = self._rnn(a, h, dt)
-		return logits, h
+		z = torch.cat([obs, a], dim=-1)
+		readout, h_hat = self._hmm(z, h, dt)
+		latent = self._posterior(readout)
+		return latent, h_hat
+
+	def _f_rnn(self, z, a):
+		if z.dim() != 3:
+			z = z.unsqueeze(0)
+		if a.dim() != 3:
+			a = a.unsqueeze(0)
+		z = torch.cat([z, a], dim=-1)
+		next_z = self._rnn(z)
+		return next_z
 
 	def next(self, z, a, h, task=None):
 		"""

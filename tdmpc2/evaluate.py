@@ -96,7 +96,7 @@ def evaluate(cfg: dict):
 				start_time = time.time_ns()
 				state.append(obs.numpy())
 				wm_state.append(hidden.cpu().numpy())
-				action, hidden = agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action = agent.act(obs, t0=t==0, info=info, eval_mode=True)
 				end_time = time.time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = env.step(action)

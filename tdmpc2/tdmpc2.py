@@ -27,7 +27,7 @@ class TDMPC2(torch.nn.Module):
 		# if self.cfg.compile:
 		# 	self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
-			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
+			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._hmm.parameters()},
 			{'params': self.model._rnn.parameters()},
 			{'params': self.model._reward.parameters()},
@@ -169,7 +169,17 @@ class TDMPC2(torch.nn.Module):
 		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
 	@torch.no_grad()
-	def act(self, obs, t0=False, h=None, h_hat=None, info={}, eval_mode=False, task=None):
+	def observe(self, obs, prev_act, b, dt=None):
+		obs = obs.to(self.device, non_blocking=True).unsqueeze(0)
+		prev_act = prev_act.to(self.device, non_blocking=True).unsqueeze(0)
+		tensor_dt = None
+		if dt is not None:
+			tensor_dt = torch.tensor(dt, dtype=torch.float, device=self.device,
+									 requires_grad=False).reshape((1, 1))
+		return self.model.hmm(obs, prev_act, b, tensor_dt)
+
+	@torch.no_grad()
+	def act(self, z, t0=False, info={}, eval_mode=False, task=None):
 		"""
 		Select an action by planning in the latent space of the world model.
 
@@ -182,37 +192,32 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: Action to take in the environment.
 		"""
-		obs = obs.to(self.device, non_blocking=True).unsqueeze(0)
 		if task is not None:
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
-			z = self.model.encode(obs)
 			tensor_dt = None
 			if info.get("timestamp") is not None:
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
-			z, h_hat = self.model.hmm(z, h, h_hat, tensor_dt)
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(z, h, h_hat, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
+			a = self.plan(z, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 		else:
-			a = self.model.pi(h_hat, task)[int(not eval_mode)][0]
+			a = self.model.pi(z, task)[int(not eval_mode)][0]
 		return a.cpu()
 
 	@torch.no_grad()
-	def _estimate_value(self, z, h, h_hat, actions, dt=None):
+	def _estimate_value(self, z, actions):
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		for t in range(self.cfg.horizon):
 			reward = math.two_hot_inv(self.model.reward(z, actions[t]), self.cfg)
-			z_hat, h = self.model.rnn(h_hat, actions[t], h, dt=dt)
-			# move forward
-			z, h_hat = self.model.hmm(z_hat, h, h_hat, dt)
+			z,= self.model.rnn(z, actions[t])
 			G += discount * reward
 			discount_update = self.discount
 			discount = discount * discount_update
 		return G + discount * self.model.Q(z, self.model.pi(z)[1], return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, z, h, h_hat, t0=torch.tensor(False), dt=None, eval_mode=torch.tensor(False), task=None):
+	def _plan(self, z, t0=torch.tensor(False), dt=None, eval_mode=torch.tensor(False), task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 
@@ -229,20 +234,16 @@ class TDMPC2(torch.nn.Module):
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_z = z.repeat(self.cfg.num_pi_trajs, 1)
-			_h = h.repeat(self.cfg.num_pi_trajs, 1)
-			_h_hat = h_hat.repeat(self.cfg.num_pi_trajs, 1)
+			# _h = h.repeat(self.cfg.num_pi_trajs, 1)
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.horizon-1):
 				pi_actions[t] = self.model.pi(z, task)[1]
-				_z, _h = self.model.rnn(_h_hat, pi_actions[t], _h)
-				_z, _h_hat = self.model.hmm(_z, _h, _h_hat, dt)
+				_z = self.model.rnn(_z, pi_actions[t])
 
 			pi_actions[-1] = self.model.pi(_z, task)[1]
 
 		# Initialize state and parameters
 		z = z.repeat(self.cfg.num_samples, 1)
-		h = h.repeat(self.cfg.num_samples, 1) if h is not None else None
-		h_hat = h_hat.repeat(self.cfg.num_samples, 1) if h_hat is not None else None
 		dt = dt.repeat(self.cfg.num_samples, 1) if dt is not None else None
 		mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
 		std = torch.full((self.cfg.horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
@@ -264,7 +265,7 @@ class TDMPC2(torch.nn.Module):
 				actions = actions * self.model._action_masks[task]
 
 			# Compute elite actions
-			value = self._estimate_value(z, h, h_hat, actions, dt=dt).nan_to_num(0)
+			value = self._estimate_value(z, actions).nan_to_num(0)
 			elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
 			elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
@@ -380,47 +381,48 @@ class TDMPC2(torch.nn.Module):
 		# Prepare for update
 		self.model.train()
 
-		with torch.no_grad():
-			next_z = self.model.encode(obs[1:])
-
-		# next_obs = obs[1:]
-
 		# Encoding memory
-		h_hat = self.initial_h.repeat(self.cfg.batch_size, 1)
-		h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		z_prob, h_hat = self.model.hmm(self.model.encode(prev_obs[0]).detach(), h, h_hat, prev_dt[0])
+		b = self.initial_h.repeat(self.cfg.batch_size, 1)
+		# h = self.initial_h.repeat(self.cfg.batch_size, 1)
 
-		# h = prev_hidden[0].detach()
-		for _, (_a, _obs, _dt, _is_first) in enumerate(
-					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
-			z_hat, h = self.model.rnn(h_hat, _a, h)
-			z_prob, h_hat = self.model.hmm(self.model.encode(_obs).detach(), h, h_hat, _dt)
+		z, b = self.model.hmm(prev_obs[0], prev_action[0], b, prev_dt[0])
+		next_prev_obs = prev_obs[1:]
+		next_prev_act = prev_action[1:]
+		next_prev_dt = prev_dt[1:]
+
+		for _, (_a, _obs, _dt) in enumerate(
+					zip(next_prev_act.unbind(0), next_prev_obs.unbind(0), next_prev_dt.unbind(0))):
+			# _, h = self.model.rnn(z, _a, h)
+			z, b = self.model.hmm(_obs, _a, b, _dt)
 
 		# Latent rollout
-		zs_probs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
-		zs_probs_hat = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
-		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
-		hs_hat = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
+		zs = torch.empty(self.cfg.horizon+2, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
+		zs_hat = torch.empty(self.cfg.horizon+2, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
+		# hs = torch.empty(self.cfg.horizon+2, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
+		bs = torch.empty(self.cfg.horizon+2, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 
-		zs_prob, h_hat = self.model.hmm(self.model.encode(obs[0]), h, h_hat, dt[0])
-		zs_probs[0] = zs_prob
-		hs_hat[0] = h_hat
+		bs[0] = b
+		# hs[0] = h
+		zs[0] = z
+		zs_hat[0] = z.detach()
+		dynamics_loss = 0
 		consistency_loss = 0
 		one_step_prediction_error = 0
-		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
+		for t, (_action, _obs, _dt, _is_first) in enumerate(zip(action.unbind(0), obs.unbind(0), dt.unbind(0), is_first.unbind(0))):
 			# (z_{t+1}, h_{t+1}) = f(z_t, a_{t-1}, h_{t-1})
-			zs_probs_hat[t], hs[t] = self.model.rnn(hs_hat[t], _action, h)
-			zs_probs[t+1], hs_hat[t+1] = self.model.hmm(_next_z, hs[t], hs_hat[t], _dt)
+			zs_hat[t+1] = self.model.rnn(zs_hat[t], _action)
+			zs[t+1], bs[t+1] = self.model.hmm(_obs, _action, bs[t], _dt)
 
 			# KL Divergence loss
-			consistency_loss = consistency_loss + F.mse_loss(zs_probs_hat[t], zs_probs[t+1]) * self.cfg.rho**t
+			consistency_loss = consistency_loss + F.mse_loss(zs_hat[t+1].detach(), zs[t+1]) * self.cfg.rho**t
+			dynamics_loss = dynamics_loss + F.mse_loss(zs_hat[t+1], zs[t+1].detach()) * self.cfg.rho**t
 			# consistency_loss = consistency_loss + torch.nn.KLDivLoss(F.log_softmax(zs_probs_hat[t]), F.softmax(zs_probs[t+1])) * self.cfg.rho**t
 
 			if t == 0:
 				one_step_prediction_error = consistency_loss
 
 		# Predictions
-		_zs = zs_probs[:-1]
+		_zs = zs_hat[:-1].detach()
 
 		# # Q-value discrepancy for timestep t and t+H
 		# with torch.no_grad():
@@ -438,7 +440,7 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(zs_probs[1:], reward, task)
+			td_targets = self._td_target(zs[1:].detach(), reward, task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -448,10 +450,12 @@ class TDMPC2(torch.nn.Module):
 				value_loss = value_loss + math.soft_ce(qs_unbind_unbind, td_targets_unbind, self.cfg).mean() * self.cfg.rho**t
 
 		consistency_loss = consistency_loss / self.cfg.horizon
+		dynamics_loss = (dynamics_loss / self.cfg.horizon)
 		reward_loss = reward_loss / self.cfg.horizon
 		value_loss = value_loss / (self.cfg.horizon * self.cfg.num_q)
 		total_loss = (
 			self.cfg.consistency_coef * consistency_loss +
+			self.cfg.dynamics_coef * dynamics_loss +
 			self.cfg.reward_coef * reward_loss +
 			self.cfg.value_coef * value_loss
 		)
@@ -476,6 +480,7 @@ class TDMPC2(torch.nn.Module):
 		self._first_update = False
 		info_dict = {
 			"consistency_loss": consistency_loss,
+			"dynamics_loss": dynamics_loss,
 			"reward_loss": reward_loss,
 			"value_loss": value_loss,
 
