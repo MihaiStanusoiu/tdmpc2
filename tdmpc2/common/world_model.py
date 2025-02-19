@@ -32,6 +32,7 @@ class WorldModel(nn.Module):
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
+			self._rnn_val = None
 			self._prior = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 			self._posterior = NormedLinear(obs_dim + cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		elif cfg.rnn_type == 'cfc_pure':
@@ -138,7 +139,19 @@ class WorldModel(nn.Module):
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
 		return self._encoder[self.cfg.obs](obs)
 
-	def rnn(self, z, a, task=None, h=None, dt=None):
+	@property
+	def rnn(self):
+		_rnn_val = getattr(self, "_rnn_val", None)
+		if _rnn_val is not None:
+			return _rnn_val
+		if self.cfg.compile:
+			rnn = torch.compile(self._f_rnn, mode="reduce-overhead")
+		else:
+			rnn = self._f_rnn
+		self._rnn_val = rnn
+		return self._rnn_val
+
+	def _f_rnn(self, z, a, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 		if z.dim() != 3:
