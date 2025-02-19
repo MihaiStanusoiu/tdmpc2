@@ -38,10 +38,11 @@ steps: 10_000_000
 batch_size: 256
 reward_coef: 0.1
 value_coef: 0.1
-consistency_coef: 20
+consistency_coef: 10
+dynamics_coef: 10
 rho: 0.5
 lr: 3e-4
-burn_in: 10
+burn_in: 3
 enc_lr_scale: 0.3
 grad_clip_norm: 10
 tau: 0.01

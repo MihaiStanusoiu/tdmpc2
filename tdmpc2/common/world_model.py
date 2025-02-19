@@ -25,13 +25,15 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		cfg.latent_dim = cfg.obs_shape['state'][0]
-		self.cfg.latent_dim = cfg.latent_dim
+		obs_dim = cfg.obs_shape['state'][0]
+		# self.cfg.latent_dim = cfg.latent_dim
 		if cfg.rnn_type == 'cfc':
 			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
+			self._prior = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
+			self._posterior = NormedLinear(obs_dim + cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		elif cfg.rnn_type == 'cfc_pure':
 			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
@@ -45,9 +47,9 @@ class WorldModel(nn.Module):
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
+		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
 
@@ -71,8 +73,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._encoder, self._rnn, self._reward, self._pi, self._Qs]):
+		modules = ['Prior', 'Posterior', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
+		for i, m in enumerate([self._prior, self._posterior, self._rnn, self._reward, self._pi, self._Qs]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -139,17 +141,26 @@ class WorldModel(nn.Module):
 	def rnn(self, z, a, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
 		if a.dim() != 3:
 			a = a.unsqueeze(0)
+		z = torch.cat([z, a], dim=-1)
 		if h is None:
 			h = self.initial_h.expand(z.shape[1], -1)
 		# if dt is None:
 		# 	dt = torch.ones((z.shape[0], z.shape[1], 1), device=h.device, requires_grad=False)
 		readout, h = self._rnn(z, h, dt)
 		return readout, h
+
+	def posterior(self, obs, h):
+		# h = h.unsqueeze(0)
+		z = torch.cat([obs, h], dim=-1)
+		return self._posterior(z)
+
+	def prior(self, h):
+		# h = h.unsqueeze(0)
+		return self._prior(h)
 
 	def next(self, z, a, h, task=None):
 		"""
@@ -165,20 +176,20 @@ class WorldModel(nn.Module):
 		"""
 		Forward pass through the world model.
 		"""
-		z_next, h = self.rnn(z, a, task, h, dt=dt)
+		_, h = self.rnn(z, a, task, h, dt=dt)
 		# z_next = self.next(z, a, h, task)
-		return z_next, h
+		return self.prior(h), h
 	
-	def reward(self, z, a, h, task=None):
+	def reward(self, z, a, task=None):
 		"""
 		Predicts instantaneous (single-step) reward.
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a, h], dim=-1)
+		z = torch.cat([z, a], dim=-1)
 		return self._reward(z)
 
-	def pi(self, z, h, task=None):
+	def pi(self, z, task=None):
 		"""
 		Samples an action from the policy prior.
 		The policy prior is a Gaussian distribution with
@@ -186,8 +197,6 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-
-		z = torch.cat([z, h], dim=-1)
 
 		# Gaussian policy prior
 		mu, log_std = self._pi(z).chunk(2, dim=-1)
@@ -208,7 +217,7 @@ class WorldModel(nn.Module):
 
 		return mu, pi, log_pi, log_std
 
-	def Q(self, z, a, h, task=None, return_type='min', target=False, detach=False):
+	def Q(self, z, a, task=None, return_type='min', target=False, detach=False):
 		"""
 		Predict state-action value.
 		`return_type` can be one of [`min`, `avg`, `all`]:
@@ -222,7 +231,7 @@ class WorldModel(nn.Module):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 
-		z = torch.cat([z, a, h], dim=-1)
+		z = torch.cat([z, a], dim=-1)
 		if target:
 			qnet = self._target_Qs
 		elif detach:

@@ -29,6 +29,8 @@ class TDMPC2(torch.nn.Module):
 		self.optim = torch.optim.Adam([
 			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
+			{'params': self.model._prior.parameters()},
+			{'params': self.model._posterior.parameters()},
 			# {'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
@@ -186,7 +188,7 @@ class TDMPC2(torch.nn.Module):
 		if task is not None:
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
-			z = self.model.encode(obs, task)
+			z = self.model.posterior(obs, h)
 			tensor_dt = None
 			if info.get("timestamp") is not None:
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
@@ -194,8 +196,8 @@ class TDMPC2(torch.nn.Module):
 			a = self.plan(z, t0=torch.tensor(t0, device=self.device), h=h, dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 			_, h = self.model.rnn(z, a.unsqueeze(0), task, h, dt=tensor_dt)
 		else:
-			z = self.model.encode(obs, task)
-			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
+			z = self.model.posterior(obs, h)
+			a = self.model.pi(z, task)[int(not eval_mode)][0]
 		return a.cpu(), h
 
 	@torch.no_grad()
@@ -203,12 +205,12 @@ class TDMPC2(torch.nn.Module):
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		for t in range(self.cfg.horizon):
-			reward = math.two_hot_inv(self.model.reward(z, actions[t], h, task), self.cfg)
+			reward = math.two_hot_inv(self.model.reward(z, actions[t], task), self.cfg)
 			z, h = self.model.forward(z, actions[t], h, task, dt=dt)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
-		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], h, task, return_type='avg')
+		return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
 
 	@torch.no_grad()
 	def _plan(self, z, t0=torch.tensor(False), h=None, dt=None, eval_mode=torch.tensor(False), task=None):
@@ -233,9 +235,9 @@ class TDMPC2(torch.nn.Module):
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.horizon-1):
-				pi_actions[t] = self.model.pi(_z, _h, task)[1]
+				pi_actions[t] = self.model.pi(_z, task)[1]
 				_z, _h = self.model.forward(_z, pi_actions[t], _h, task, dt=_dt)
-			pi_actions[-1] = self.model.pi(_z, _h, task)[1]
+			pi_actions[-1] = self.model.pi(_z, task)[1]
 
 		# Initialize state and parameters
 		z = z.repeat(self.cfg.num_samples, 1)
@@ -285,7 +287,7 @@ class TDMPC2(torch.nn.Module):
 		self._prev_mean.copy_(mean)
 		return a.clamp(-1, 1)
 
-	def update_pi(self, zs, hs, task):
+	def update_pi(self, zs,  task):
 		"""
 		Update policy using a sequence of latent states.
 
@@ -296,9 +298,9 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			float: Loss of the policy update.
 		"""
-		_, pis, log_pis, _ = self.model.pi(zs, hs, task)
+		_, pis, log_pis, _ = self.model.pi(zs, task)
 
-		qs = self.model.Q(zs, pis, hs, task, return_type='avg', detach=True)
+		qs = self.model.Q(zs, pis, task, return_type='avg', detach=True)
 		self.scale.update(qs[0])
 		qs = self.scale(qs)
 
@@ -314,7 +316,7 @@ class TDMPC2(torch.nn.Module):
 		return pi_loss.detach(), pi_grad_norm
 
 	@torch.no_grad()
-	def _td_target(self, next_z, next_h, reward, dt, task):
+	def _td_target(self, next_z, reward, task):
 		"""
 		Compute the TD-target from a reward and the observation at the following time step.
 
@@ -326,9 +328,9 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: TD-target.
 				"""
-		pi = self.model.pi(next_z, next_h, task)[1]
+		pi = self.model.pi(next_z, task)[1]
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
-		return reward + discount * self.model.Q(next_z, pi, next_h, task, return_type='min', target=True)
+		return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
 
 	@staticmethod
 	def _mask(value, mask):
@@ -373,41 +375,44 @@ class TDMPC2(torch.nn.Module):
 			dict: Dictionary of training statistics.
 		"""
 
-		with torch.no_grad():
-			next_z = self.model.encode(obs[1:], task)
+		next_obs = obs[1:]
 
 		# Encoding memory
 		h = self.initial_h.repeat(self.cfg.batch_size, 1)
+		z = self.model.posterior(prev_obs[0], h)
 
 		# h = prev_hidden[0].detach()
 		for _, (_a, _obs, _dt, _is_first) in enumerate(
 					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
-			z = self.model.encode(_obs, task)
-			_, h = self.model.rnn(z.detach(), _a, task, h, _dt)
+			_, h = self.model.rnn(z, _a, task, h, _dt)
 
 		# Prepare for update
 		self.model.train()
 
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
+		zs_post = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 		hs_p = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 
-		z = self.model.encode(obs[0], task)
+		z = self.model.posterior(obs[0], h)
+
 		zs[0] = z
+		zs_post[0] = z.detach()
 		hs[0] = h
 		consistency_loss = 0
+		dynamics_loss = 0
 		one_step_prediction_error = 0
-		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
+		for t, (_action, _next_obs, _dt, _is_first) in enumerate(zip(action.unbind(0), next_obs.unbind(0), dt.unbind(0), is_first.unbind(0))):
 			# (z_{t+1}, h_{t+1}) = f(z_t, a_{t-1}, h_{t-1})
-			z, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
-			with torch.no_grad():
-				_, h_p = self.model.forward(_next_z, _action, hs_p[t], task, dt=_dt)
-				hs_p[t+1] = h_p
-			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
+			z_hat, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
+			z = self.model.posterior(_next_obs, h)
+			consistency_loss = consistency_loss + F.mse_loss(z, z_hat.detach()) * self.cfg.rho**t
+			dynamics_loss = dynamics_loss + F.mse_loss(z.detach(), z_hat) * self.cfg.rho**t
 			if t == 0:
-				one_step_prediction_error = consistency_loss
-			zs[t+1] = z
+				one_step_prediction_error = consistency_loss.detach()
+			zs[t+1] = z_hat
+			zs_post[t+1] = z.detach()
 			hs[t+1] = h
 
 		# Predictions
@@ -425,12 +430,12 @@ class TDMPC2(torch.nn.Module):
 		# 	q_discrepancy_t = q_discrepancy[0]
 		# 	q_discrepancy_H = q_discrepancy[-1]
 
-		qs = self.model.Q(_zs, action, _hs, task, return_type='all')
-		reward_preds = self.model.reward(_zs, action, _hs, task)
+		qs = self.model.Q(_zs, action, task, return_type='all')
+		reward_preds = self.model.reward(_zs, action, task)
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_z, hs_p[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_target(zs_post[1:].detach(), reward, task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -440,10 +445,12 @@ class TDMPC2(torch.nn.Module):
 				value_loss = value_loss + math.soft_ce(qs_unbind_unbind, td_targets_unbind, self.cfg).mean() * self.cfg.rho**t
 
 		consistency_loss = consistency_loss / self.cfg.horizon
+		dynamics_loss = dynamics_loss / self.cfg.horizon
 		reward_loss = reward_loss / self.cfg.horizon
 		value_loss = value_loss / (self.cfg.horizon * self.cfg.num_q)
 		total_loss = (
 			self.cfg.consistency_coef * consistency_loss +
+			self.cfg.dynamics_coef * dynamics_loss +
 			self.cfg.reward_coef * reward_loss +
 			self.cfg.value_coef * value_loss
 		)
@@ -458,7 +465,7 @@ class TDMPC2(torch.nn.Module):
 
 		if not self.cfg.freeze_pi:
 			# Update policy
-			pi_loss, pi_grad_norm = self.update_pi(zs.detach(), hs.detach(), task)
+			pi_loss, pi_grad_norm = self.update_pi(zs.detach(), task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
@@ -468,6 +475,7 @@ class TDMPC2(torch.nn.Module):
 		self._first_update = False
 		info_dict = {
 			"consistency_loss": consistency_loss,
+			"dynamics_loss": dynamics_loss,
 			"reward_loss": reward_loss,
 			"value_loss": value_loss,
 
