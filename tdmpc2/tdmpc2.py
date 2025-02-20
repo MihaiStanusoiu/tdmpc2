@@ -364,7 +364,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, prev_dt, prev_is_first, obs, action, reward, dt, is_first, task=None):
+	def _update(self, prev_obs, prev_action, prev_dt, obs, action, reward, dt, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -375,15 +375,14 @@ class TDMPC2(torch.nn.Module):
 			dict: Dictionary of training statistics.
 		"""
 
-		next_obs = obs[1:]
-
 		# Encoding memory
 		h = self.initial_h.repeat(self.cfg.batch_size, 1)
 		z = self.model.posterior(prev_obs[0], h)
 
 		# h = prev_hidden[0].detach()
-		for _, (_a, _obs, _dt, _is_first) in enumerate(
-					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
+		prev_obs = prev_obs[1:]
+		for _, (_a, _obs, _dt) in enumerate(
+					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0))):
 			_, h = self.model.rnn(z, _a, task, h, _dt)
 			z = self.model.posterior(_obs, h)
 
@@ -402,7 +401,7 @@ class TDMPC2(torch.nn.Module):
 		consistency_loss = 0
 		dynamics_loss = 0
 		one_step_prediction_error = 0
-		for t, (_action, _next_obs, _dt, _is_first) in enumerate(zip(action.unbind(0), next_obs.unbind(0), dt.unbind(0), is_first.unbind(0))):
+		for t, (_action, _next_obs, _dt) in enumerate(zip(action.unbind(0), obs.unbind(0), dt.unbind(0))):
 			# (z_{t+1}, h_{t+1}) = f(z_t, a_{t-1}, h_{t-1})
 			z_hat, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
 			z = self.model.posterior(_next_obs, h)
@@ -509,5 +508,5 @@ class TDMPC2(torch.nn.Module):
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[:self.cfg.burn_in+1], action[:self.cfg.burn_in], dt[:self.cfg.burn_in+1], is_first[:self.cfg.burn_in+1], obs[self.cfg.burn_in+1:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in+1:], is_first[self.cfg.burn_in+1:], **kwargs)
+		return self._update(obs[:self.cfg.burn_in+1], action[:self.cfg.burn_in], dt[:self.cfg.burn_in], obs[self.cfg.burn_in+1:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], **kwargs)
 
