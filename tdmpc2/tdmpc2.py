@@ -385,6 +385,7 @@ class TDMPC2(torch.nn.Module):
 		for _, (_a, _obs, _dt, _is_first) in enumerate(
 					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
 			_, h = self.model.rnn(z, _a, task, h, _dt)
+			z = self.model.posterior(_obs, h)
 
 		# Prepare for update
 		self.model.train()
@@ -394,8 +395,6 @@ class TDMPC2(torch.nn.Module):
 		zs_post = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 		hs_p = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
-
-		z = self.model.posterior(obs[0], h)
 
 		zs[0] = z
 		zs_post[0] = z.detach()
@@ -510,5 +509,5 @@ class TDMPC2(torch.nn.Module):
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], dt[:self.cfg.burn_in], is_first[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first[self.cfg.burn_in:], **kwargs)
+		return self._update(obs[:self.cfg.burn_in+1], action[:self.cfg.burn_in], dt[:self.cfg.burn_in+1], is_first[:self.cfg.burn_in+1], obs[self.cfg.burn_in+1:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in+1:], is_first[self.cfg.burn_in+1:], **kwargs)
 
