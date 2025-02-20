@@ -377,14 +377,12 @@ class TDMPC2(torch.nn.Module):
 
 		# Encoding memory
 		h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		z = self.model.posterior(prev_obs[0], h)
 
 		# h = prev_hidden[0].detach()
-		prev_obs = prev_obs[1:]
 		for _, (_a, _obs, _dt) in enumerate(
 					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0))):
-			_, h = self.model.rnn(z, _a, task, h, _dt)
 			z = self.model.posterior(_obs, h)
+			_, h = self.model.rnn(z, _a, task, h, _dt)
 
 		# Prepare for update
 		self.model.train()
@@ -395,13 +393,15 @@ class TDMPC2(torch.nn.Module):
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 		hs_p = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 
+		z = self.model.posterior(obs[0], h)
 		zs[0] = z
 		zs_post[0] = z.detach()
 		hs[0] = h
 		consistency_loss = 0
 		dynamics_loss = 0
 		one_step_prediction_error = 0
-		for t, (_action, _next_obs, _dt) in enumerate(zip(action.unbind(0), obs.unbind(0), dt.unbind(0))):
+		next_obs = obs[1:]
+		for t, (_action, _next_obs, _dt) in enumerate(zip(action.unbind(0), next_obs.unbind(0), dt.unbind(0))):
 			# (z_{t+1}, h_{t+1}) = f(z_t, a_{t-1}, h_{t-1})
 			z_hat, h = self.model.forward(z, _action, hs[t], task, dt=_dt)
 			z = self.model.posterior(_next_obs, h)
@@ -508,5 +508,5 @@ class TDMPC2(torch.nn.Module):
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[:self.cfg.burn_in+1], action[:self.cfg.burn_in], dt[:self.cfg.burn_in], obs[self.cfg.burn_in+1:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], **kwargs)
+		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], dt[:self.cfg.burn_in], obs[self.cfg.burn_in], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], **kwargs)
 
