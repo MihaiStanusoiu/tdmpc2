@@ -32,6 +32,9 @@ class OnlineTrainer(Trainer):
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestamp': self.env.get_timestep()}
+			h_belief = self.agent.initial_h.detach()
+			z = self.agent.initial_z.detach()
+			b, h_belief = self.agent.observe(z, obs, h_belief, info.get('timestamp') or None)
 			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
@@ -39,10 +42,13 @@ class OnlineTrainer(Trainer):
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
 				start_time = time_ns()
-				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action = self.agent.act(b, t0=t==0, h=hidden, info=info, eval_mode=True)
+				with torch.no_grad():
+					z, hidden = self.agent.model.rnn(b, action, h=hidden, dt=info.get('timestamp') or None)
 				end_time = time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
+				b, h_belief = self.agent.observe(z, obs, h_belief, info.get('timestamp') or None)
 				ep_reward += reward
 				t += 1
 				if self.cfg.save_video:
@@ -118,6 +124,7 @@ class OnlineTrainer(Trainer):
 		reset_success_count = False
 		log_success_rate = False
 		h = self.agent.initial_h.detach()
+		h_belief = self.agent.initial_h.detach()
 		h_next = h
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
@@ -164,6 +171,9 @@ class OnlineTrainer(Trainer):
 				info = {'timestamp': self.env.get_timestep()}
 				is_first = True
 				h = self.agent.initial_h.detach()
+				h_belief = self.agent.initial_h.detach()
+				z = self.agent.initial_z.detach()
+				b, h_belief = self.agent.observe(z, obs, h_belief, info.get('timestamp') or None)
 				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
@@ -171,6 +181,8 @@ class OnlineTrainer(Trainer):
 				if self.cfg.warmup_h:
 					# h warmup
 					h = self.agent.initial_h.detach()
+					h_belief = self.agent.initial_h.detach()
+					z = self.agent.initial_z.detach()
 					if len(self._tds) > 1:
 						burn_in_tds = self._tds[-self.cfg.burn_in:-1]
 						prev_obs = [td['obs'] for td in burn_in_tds]
@@ -180,16 +192,19 @@ class OnlineTrainer(Trainer):
 						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
 						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
-							z = self.agent.model.posterior(prev_obs[0], h)
+							b, h_belief = self.agent.model.posterior(z, prev_obs[0], h_belief, prev_dt[0])
 							prev_obs = prev_obs[1:]
 							for _, (_a, _obs, _dt) in enumerate(
 									zip(prev_act.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0))):
-								_, h = self.agent.model.rnn(z, _a, h=h, dt=_dt)
-								z = self.agent.model.posterior(_obs, h)
-				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
+								z, h = self.agent.model.rnn(b, _a, h=h, dt=_dt)
+								b, h_belief = self.agent.model.posterior(z, _obs, h)
+				action = self.agent.act(b, t0=len(self._tds)==1, h=h, info=info)
+				with torch.no_grad():
+					z, h_next = self.agent.model.rnn(b, action, h=h, dt=info.get('timestamp') or None)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
+			b, h_belief = self.agent.observe(z, obs, h_belief, info.get('timestamp') or None)
 			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, h, is_first=False))
 			h = h_next
 

@@ -26,6 +26,8 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		obs_dim = cfg.obs_shape['state'][0]
+		self._obs_predictor = layers.mlp(cfg.latent_dim,  max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], obs_dim)
+		# self._encoder = nn.LayerNorm(obs_dim)
 		# self.cfg.latent_dim = cfg.latent_dim
 		if cfg.rnn_type == 'cfc':
 			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
@@ -34,7 +36,12 @@ class WorldModel(nn.Module):
 							return_sequences=False)
 			self._rnn_val = None
 			self._prior = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
-			self._posterior = NormedLinear(obs_dim + cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
+			# self._posterior = NormedLinear(obs_dim + cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
+			# self._posterior = layers.mlp(obs_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+			self._posterior = CfC(cfg.latent_dim + cfg.latent_dim, cfg.hidden_dim, cfg.latent_dim,
+							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+							backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False,
+							return_sequences=False)
 		elif cfg.rnn_type == 'cfc_pure':
 			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
@@ -47,6 +54,7 @@ class WorldModel(nn.Module):
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
+		self.initial_z = nn.Parameter(torch.zeros(1, cfg.latent_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
 		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
@@ -74,8 +82,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Prior', 'Posterior', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._prior, self._posterior, self._rnn, self._reward, self._pi, self._Qs]):
+		modules = ['Encoder', 'Observation Predictor', 'Prior', 'Posterior', 'Dynamics', 'Reward', 'Policy prior', 'Q-functions']
+		for i, m in enumerate([self._encoder, self._obs_predictor, self._prior, self._posterior, self._rnn, self._reward, self._pi, self._Qs]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -166,10 +174,15 @@ class WorldModel(nn.Module):
 		readout, h = self._rnn(z, h, dt)
 		return readout, h
 
-	def posterior(self, obs, h):
+	def posterior(self, z, obs, h, dt):
 		# h = h.unsqueeze(0)
-		z = torch.cat([obs, h], dim=-1)
-		return self._posterior(z)
+		obs = self.encode(obs)
+		if z.dim() != 3:
+			z = z.unsqueeze(0)
+		if obs.dim() != 3:
+			obs = obs.unsqueeze(0)
+		z = torch.cat([z, obs], dim=-1)
+		return self._posterior(z, h, dt)
 
 	def prior(self, h):
 		# h = h.unsqueeze(0)

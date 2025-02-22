@@ -151,15 +151,15 @@ def enc(cfg, out={}):
 	"""
 	for k in cfg.obs_shape.keys():
 		if k == 'state':
-			out[k] = mlp(cfg.obs_shape[k][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim - cfg.hidden_dim, act=SimNorm(cfg))
+			out[k] = mlp(cfg.obs_shape[k][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
 		elif k == 'rgb':
 			out[k] = conv(cfg.obs_shape[k], cfg.num_channels, act=SimNorm(cfg))
 		else:
 			raise NotImplementedError(f"Encoder for observation type {k} not implemented.")
 	return nn.ModuleDict(out)
 
-	# # do not encode state
+	# do not encode state
 	# for k in cfg.obs_shape.keys():
 	# 	if k == 'state':
-	# 		out[k] = nn.Sequential(nn.Identity())
+	# 		out[k] = nn.Sequential(nn.LayerNorm(cfg.obs_shape[k][0]))
 	# return nn.ModuleDict(out)

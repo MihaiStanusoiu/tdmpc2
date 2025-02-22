@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 
 def soft_ce(pred, target, cfg):
@@ -8,6 +9,12 @@ def soft_ce(pred, target, cfg):
 	target = two_hot(target, cfg)
 	return -(target * pred).sum(-1, keepdim=True)
 
+def simnorm_kl(pred, target, cfg):
+	shp = pred.shape
+	pred_v = torch.log(pred.view(*shp[:-1], -1, cfg.simnorm_dim))
+	target_v = target.view(*shp[:-1], -1, cfg.simnorm_dim)
+	kl_loss = nn.KLDivLoss(reduction="batchmean")
+	return kl_loss(pred_v, target_v)
 
 def log_std(x, low, dif):
 	return low + 0.5 * dif * (torch.tanh(x) + 1)
