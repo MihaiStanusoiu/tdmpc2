@@ -31,7 +31,8 @@ class OnlineTrainer(Trainer):
 		ep_rewards, ep_successes, ep_runtime_means, ep_runtime_stds = [], [], [], []
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
-			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestamp': self.env.get_timestep()}
+			obs, done, ep_reward, t, info = self.env.reset(), False, 0, 0, {'timestamp': self.env.get_timestep()}
+			l, hidden = self.agent.initial_state(obs, info.get('timestamp'))
 			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
@@ -39,7 +40,7 @@ class OnlineTrainer(Trainer):
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
 				start_time = time_ns()
-				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action, l, hidden = self.agent.act(obs, l, t0=t==0, h=hidden, info=info, eval_mode=True)
 				end_time = time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
@@ -117,8 +118,6 @@ class OnlineTrainer(Trainer):
 		ep_count = 0
 		reset_success_count = False
 		log_success_rate = False
-		h = self.agent.initial_h.detach()
-		h_next = h
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
@@ -162,8 +161,9 @@ class OnlineTrainer(Trainer):
 
 				obs = self.env.reset()
 				info = {'timestamp': self.env.get_timestep()}
+				l, h = self.agent.initial_state(obs, info.get('timestamp') or None)
+				h_next = h
 				is_first = True
-				h = self.agent.initial_h.detach()
 				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
@@ -181,7 +181,7 @@ class OnlineTrainer(Trainer):
 						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
 							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
-				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
+				action, l, h_next = self.agent.act(obs, l, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)

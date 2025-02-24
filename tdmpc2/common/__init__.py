@@ -1,7 +1,7 @@
 MODEL_SIZE = { # parameters (M)
 	'cartpole': {
 			  'mlp_dim': 128,
-			  'hidden_dim': 5,
+			  'hidden_dim': 64,
 			  'backbone_units': 128,
 			  'backbone_layers': 1,
 			  'backbone_dropout': 0.0,
