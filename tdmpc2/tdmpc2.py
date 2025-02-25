@@ -191,7 +191,7 @@ class TDMPC2(torch.nn.Module):
 			if info.get("timestamp") is not None:
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(z, t0=t0, h=h, dt=tensor_dt, eval_mode=eval_mode, task=task)
+			a = self.plan(z, t0=torch.tensor(t0, device=self.device), h=h, dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 			_, h = self.model.rnn(z, a.unsqueeze(0), task, h, dt=tensor_dt)
 		else:
 			z = self.model.encode(obs, task)
@@ -211,7 +211,7 @@ class TDMPC2(torch.nn.Module):
 		return G + discount * self.model.Q(z, self.model.pi(z, h, task)[1], h, task, return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, z, t0=False, h=None, dt=None, eval_mode=False, task=None):
+	def _plan(self, z, t0=torch.tensor(False), h=None, dt=None, eval_mode=torch.tensor(False), task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 
@@ -404,10 +404,8 @@ class TDMPC2(torch.nn.Module):
 		# h = prev_hidden[0].detach()
 		for _, (_a, _obs, _dt, _is_first) in enumerate(
 					zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
-			_h = self._mask(h, 1.0 - _is_first)
-			_h = _h + self._mask(self.initial_h, _is_first)
 			z = self.model.encode(_obs, task)
-			_, h = self.model.rnn(z.detach(), _a, task, _h, _dt)
+			_, h = self.model.rnn(z.detach(), _a, task, h, _dt)
 
 		# Prepare for update
 		self.model.train()
@@ -422,9 +420,7 @@ class TDMPC2(torch.nn.Module):
 		consistency_loss = 0
 		one_step_prediction_error = 0
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(action.unbind(0), next_z.unbind(0), dt.unbind(0), is_first.unbind(0))):
-			ht = self._mask(hs[t], 1.0 - _is_first)
-			ht = ht + self._mask(self.initial_h, _is_first)
-			z, h = self.model.forward(z, _action, ht, task, dt=_dt)
+			z, h = self.model.forward(z, _action, h, task, dt=_dt)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.cfg.rho**t
 			if t == 0:
 				one_step_prediction_error = consistency_loss

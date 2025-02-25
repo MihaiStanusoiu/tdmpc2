@@ -66,7 +66,7 @@ class OnlineTrainer(Trainer):
 			episode_runtime_std=np.nanmean(ep_runtime_stds),
 		)
 
-	def to_td(self, obs, action=None, reward=None, done=False, dt=None, h=None, is_first=False):
+	def to_td(self, obs, action=None, reward=None, done=False, dt=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -81,7 +81,6 @@ class OnlineTrainer(Trainer):
 		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
-			h=h if h is not None else self.agent.initial_h,
 			reward=reward.unsqueeze(0),
 			done=torch.tensor(done, dtype=torch.float).unsqueeze(0),
 			dt=dt.unsqueeze(0),
@@ -165,7 +164,7 @@ class OnlineTrainer(Trainer):
 				info = {'timestamp': self.env.get_timestep()}
 				is_first = True
 				h = self.agent.initial_h.detach()
-				self._tds = [self.to_td(obs, h=h, done=False, dt=info.get("timestamp") or None, is_first=True)]
+				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
@@ -186,7 +185,7 @@ class OnlineTrainer(Trainer):
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, h=None, is_first=False))
+			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, is_first=False))
 			h = h_next
 
 			# Update agent
