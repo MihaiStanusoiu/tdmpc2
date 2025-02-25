@@ -31,7 +31,7 @@ class WorldModel(nn.Module):
 		# cfg.latent_dim = cfg.obs_shape['state'][0]
 		# self.cfg.latent_dim = cfg.latent_dim
 		if cfg.rnn_type == 'cfc':
-			self._rnn = CfC(obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
+			self._rnn = CfC(cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=True)
@@ -47,7 +47,8 @@ class WorldModel(nn.Module):
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		# self._latent = layers.mlp(obs_dim + cfg.hidden_dim, cfg.mlp_dim, cfg.latent_dim)
-		self._decoder = nn.Linear(cfg.latent_dim, obs_dim)
+		# self._decoder = layers.mlp(cfg.latent_dim, 2*[cfg.mlp_dim], obs_dim, act=SiLU())
+		self._dynamics = NormedLinear(cfg.latent_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		self.initial_l = nn.Parameter(torch.zeros(1, cfg.latent_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
@@ -77,8 +78,8 @@ class WorldModel(nn.Module):
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
-		modules = ['Encoder', 'Dynamics', 'Reward', 'Decoder', 'Policy prior', 'Q-functions']
-		for i, m in enumerate([self._encoder, self._rnn, self._reward, self._decoder, self._pi, self._Qs]):
+		modules = ['Encoder', 'Dynamics', 'Reward', 'Dynamics', 'Policy prior', 'Q-functions']
+		for i, m in enumerate([self._encoder, self._rnn, self._reward, self._dynamics, self._pi, self._Qs]):
 			repr += f"{modules[i]}: {m}\n"
 		repr += "Learnable parameters: {:,}".format(self.total_params)
 		return repr
@@ -155,19 +156,19 @@ class WorldModel(nn.Module):
 		"""
 		return self._decoder(l)
 
-	def rnn(self, z, a, task=None, h=None, dt=None):
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
-		if z.dim() != 3:
-			z = z.unsqueeze(0)
+	def rnn(self, a, task=None, h=None, dt=None):
+		# if self.cfg.multitask:
+		# 	z = self.task_emb(z, task)
+		# z = torch.cat([z, a], dim=-1)
+		# if z.dim() != 3:
+		# 	z = z.unsqueeze(0)
 		if a.dim() != 3:
 			a = a.unsqueeze(0)
 		if h is None:
-			h = self.initial_h.expand(z.shape[1], -1)
+			h = self.initial_h.expand(a.shape[1], -1)
 		# if dt is None:
 		# 	dt = torch.ones((z.shape[0], z.shape[1], 1), device=h.device, requires_grad=False)
-		readout, h = self._rnn(z, h, dt)
+		readout, h = self._rnn(a, h, dt)
 		return readout, h
 
 	def next(self, z, a, h, task=None):
@@ -180,11 +181,11 @@ class WorldModel(nn.Module):
 		z_next = self._dynamics(z)
 		return z_next
 
-	def forward(self, z, a, h, task=None, dt=None):
+	def forward(self, a, h, task=None, dt=None):
 		"""
 		Forward pass through the world model.
 		"""
-		z_next, h = self.rnn(z, a, task, h, dt=dt)
+		z_next, h = self.rnn(a, task, h, dt=dt)
 		# z_next = self.next(z, a, h, task)
 		return z_next[-1], h
 	

@@ -32,7 +32,6 @@ class OnlineTrainer(Trainer):
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, info = self.env.reset(), False, 0, 0, {'timestamp': self.env.get_timestep()}
-			l, hidden = self.agent.initial_state(obs, info.get('timestamp'))
 			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
@@ -40,7 +39,7 @@ class OnlineTrainer(Trainer):
 			while not done:
 				torch.compiler.cudagraph_mark_step_begin()
 				start_time = time_ns()
-				action, l, hidden = self.agent.act(obs, l, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action = self.agent.act(obs, t0=t==0, info=info, eval_mode=True)
 				end_time = time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
@@ -67,7 +66,7 @@ class OnlineTrainer(Trainer):
 			episode_runtime_std=np.nanmean(ep_runtime_stds),
 		)
 
-	def to_td(self, obs, action=None, reward=None, done=False, dt=None, h=None, is_first=False):
+	def to_td(self, obs, action=None, reward=None, done=False, dt=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -161,32 +160,29 @@ class OnlineTrainer(Trainer):
 
 				obs = self.env.reset()
 				info = {'timestamp': self.env.get_timestep()}
-				l, h = self.agent.initial_state(obs, info.get('timestamp') or None)
-				h_next = h
 				is_first = True
 				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
-				if self.cfg.warmup_h:
-					# h warmup
-					h = self.agent.initial_h.detach()
-					if len(self._tds) > 1:
-						burn_in_tds = self._tds[-self.cfg.burn_in:-1]
-						prev_obs = [td['obs'] for td in burn_in_tds]
-						prev_act = [td['action'] for td in burn_in_tds]
-						prev_dt = [td['dt'] for td in burn_in_tds]
-						prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
-						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
-						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
-						with torch.no_grad():
-							l, h = self.agent.model.forward(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
-				action, l, h_next = self.agent.act(obs, l, t0=len(self._tds)==1, h=h, info=info)
+				# if self.cfg.warmup_h:
+				# 	# h warmup
+				# 	h = self.agent.initial_h.detach()
+				# 	if len(self._tds) > 1:
+				# 		burn_in_tds = self._tds[-self.cfg.burn_in:-1]
+				# 		prev_obs = [td['obs'] for td in burn_in_tds]
+				# 		prev_act = [td['action'] for td in burn_in_tds]
+				# 		prev_dt = [td['dt'] for td in burn_in_tds]
+				# 		prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
+				# 		prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
+				# 		prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
+				# 		with torch.no_grad():
+				# 			l, h = self.agent.model.forward(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
+				action = self.agent.act(obs, t0=len(self._tds)==1, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, h, is_first=False))
-			h = h_next
+			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, is_first=False))
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps and self.buffer.num_eps > 0:
