@@ -169,13 +169,20 @@ class TDMPC2(torch.nn.Module):
 			return torch.tanh(self.model.initial_h)
 		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
+	@property
+	def initial_l(self):
+		if self.cfg.learned_init_h:
+			return self.model.initial_l
+		return torch.zeros(1, self.cfg.latent_dim, device=self.device)
+
 	def initial_state(self, obs, dt=None):
-		obs = obs.to(self.device, non_blocking=True).unsqueeze(0)
-		a = torch.zeros(1, self.cfg.action_dim, device=self.device)
-		if dt is not None:
-			dt = torch.tensor(dt, dtype=torch.float, device=self.device,
-										 requires_grad=False).reshape((1, 1))
-		return self.model.forward(self.model.encode(obs), a, self.initial_h, dt=dt)
+		# obs = obs.to(self.device, non_blocking=True).unsqueeze(0)
+		# a = torch.zeros(1, self.cfg.action_dim, device=self.device)
+		# if dt is not None:
+		# 	dt = torch.tensor(dt, dtype=torch.float, device=self.device,
+		# 								 requires_grad=False).reshape((1, 1))
+		# return self.model.forward(self.model.encode(obs), a, self.initial_h, dt=dt)
+		return self.initial_l, self.initial_h
 
 	@torch.no_grad()
 	def act(self, obs, l, t0=False, h=None, info={}, eval_mode=False, task=None):
@@ -416,7 +423,7 @@ class TDMPC2(torch.nn.Module):
 		zs = self.model.encode(obs, task)
 		ls, _ = self.model.rnn(zs[:-1], action, task, h, dt=dt)
 		pred_obs = self.model.decoder(ls)
-		consistency_loss_fn = torch.nn.MSELoss(reduction='mean')
+		consistency_loss_fn = torch.nn.MSELoss(reduction='sum')
 		consistency_loss = consistency_loss_fn(pred_obs, next_z)
 		one_step_prediction_error = F.mse_loss(zs[1], next_z)
 

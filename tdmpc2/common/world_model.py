@@ -49,6 +49,7 @@ class WorldModel(nn.Module):
 		# self._latent = layers.mlp(obs_dim + cfg.hidden_dim, cfg.mlp_dim, cfg.latent_dim)
 		self._decoder = nn.Linear(cfg.latent_dim, obs_dim)
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
+		self.initial_l = nn.Parameter(torch.zeros(1, cfg.latent_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
 		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)

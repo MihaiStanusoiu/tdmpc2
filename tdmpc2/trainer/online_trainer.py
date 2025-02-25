@@ -180,7 +180,7 @@ class OnlineTrainer(Trainer):
 						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
 						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
-							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
+							l, h = self.agent.model.forward(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
 				action, l, h_next = self.agent.act(obs, l, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
