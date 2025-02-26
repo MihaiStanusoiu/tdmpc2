@@ -76,7 +76,7 @@ class Buffer():
 		td = td.select("obs", "action", "reward", "dt", "done", "is_first", "task", strict=False).to(self._device, non_blocking=True)
 		obs = td.get('obs').contiguous()
 		action = td.get('action')[1:].contiguous()
-		reward = td.get('reward')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
+		reward = td.get('reward').unsqueeze(-1).contiguous()
 		# check if any done value is true, or 1.0
 		done = td.get('done')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
 		dt = td.get('dt').unsqueeze(-1).contiguous()

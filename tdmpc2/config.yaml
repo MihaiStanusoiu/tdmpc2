@@ -82,6 +82,7 @@ hidden_dim: 512
 backbone_units: 256
 backbone_layers: 1
 backbone_dropout: 0.1
+backbone_activation: silu
 task_dim: 96
 num_q: 5
 dropout: 0.01

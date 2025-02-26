@@ -126,6 +126,8 @@ class POMDPWrapper(Wrapper):
             remain_obs_idx = np.arange(0, 2)
         elif env_name == "Acrobot-v1" or env_name == "acrobot":
             remain_obs_idx = list(np.arange(0, 4))
+        elif env_name == 'cartpole':
+            remain_obs_idx = list([0])
         elif env_name == "MountainCarContinuous-v0":
             remain_obs_idx = list([0])
         #  1. MuJoCo

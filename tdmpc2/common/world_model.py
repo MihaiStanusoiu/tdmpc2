@@ -26,10 +26,10 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		if cfg.rnn_type == 'cfc':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
-							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + 1 + cfg.task_dim, cfg.hidden_dim, None,
+							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers, activation=cfg.backbone_activation,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
-							return_sequences=False)
+							return_sequences=True)
 		elif cfg.rnn_type == 'cfc_pure':
 			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
@@ -134,14 +134,18 @@ class WorldModel(nn.Module):
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
 		return self._encoder[self.cfg.obs](obs)
 
-	def rnn(self, z, a, task=None, h=None, dt=None):
+	def rnn(self, z, a, r, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
 		if a.dim() != 3:
 			a = a.unsqueeze(0)
+		if r.dim() != 3:
+			r = r.unsqueeze(0)
+			if r.dim() != 3:
+				r = r.unsqueeze(0)
+		z = torch.cat([z, a, r], dim=-1)
 		if h is None:
 			h = self.initial_h.expand(z.shape[1], -1)
 		# if dt is None:
@@ -155,17 +159,20 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a, h], dim=-1)
-		z_next = self._dynamics(z)
-		return z_next
+		l = torch.cat([z, a, h], dim=-1)
+		z_next = self._dynamics(l)
+		r_next = math.two_hot_inv(self.reward(z, a, h, task), self.cfg)
+		return z_next, r_next
 
-	def forward(self, z, a, h, task=None, dt=None):
+	def forward(self, z, a, r, h, task=None, dt=None):
 		"""
 		Forward pass through the world model.
 		"""
-		_, h = self.rnn(z, a, task, h, dt=dt)
-		z_next = self.next(z, a, h, task)
-		return z_next, h
+		h, _ = self.rnn(z, a, r, task, h, dt=dt)
+		if z.dim() == 2:
+			h = h.squeeze(0)
+		z_next, r_next = self.next(z, a, h, task)
+		return z_next, r_next, h
 	
 	def reward(self, z, a, h, task=None):
 		"""
