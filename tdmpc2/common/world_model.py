@@ -7,7 +7,7 @@ from ncps.torch import CfC, LTC
 from common import layers, math, init
 from tensordict.nn import TensorDictParams
 
-from common.layers import NormedLinear
+from common.layers import NormedLinear, SimNorm
 
 
 class WorldModel(nn.Module):
@@ -18,6 +18,7 @@ class WorldModel(nn.Module):
 
 	def __init__(self, cfg):
 		super().__init__()
+		# cfg.latent_dim = cfg.obs_shape['state'][0]
 		self.cfg = cfg
 		if cfg.multitask:
 			self._task_emb = nn.Embedding(len(cfg.tasks), cfg.task_dim, max_norm=1)
@@ -39,13 +40,13 @@ class WorldModel(nn.Module):
 			self._rnn = LTC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
 		elif cfg.rnn_type == 'lstm':
 			self._rnn = nn.LSTM(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False)
-		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim, [cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+		self._dynamics = layers.mlp(cfg.hidden_dim + cfg.action_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=None)
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._pi = layers.mlp(cfg.latent_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		self._reward = layers.mlp(cfg.hidden_dim	 + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
+		self._pi = layers.mlp(cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+		self._Qs = layers.Ensemble([layers.mlp(cfg.hidden_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
 
@@ -137,11 +138,11 @@ class WorldModel(nn.Module):
 	def rnn(self, z, a, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
 		if z.dim() != 3:
 			z = z.unsqueeze(0)
 		if a.dim() != 3:
 			a = a.unsqueeze(0)
+		z = torch.cat([z, a], dim=-1)
 		if h is None:
 			h = self.initial_h.expand(z.shape[1], -1)
 		# if dt is None:
@@ -149,46 +150,46 @@ class WorldModel(nn.Module):
 		readout, h = self._rnn(z, h, dt)
 		return readout, h
 
-	def next(self, z, a, h, task=None):
+	def next(self, h, a, task=None):
 		"""
 		Predicts the next latent state given the current latent state and action.
 		"""
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-		z = torch.cat([z, a, h], dim=-1)
+		# if self.cfg.multitask:
+		# 	z = self.task_emb(z, task)
+		z = torch.cat([h, a], dim=-1)
 		z_next = self._dynamics(z)
 		return z_next
 
-	def forward(self, z, a, h, task=None, dt=None):
+	def forward(self, h, a, task=None, dt=None):
 		"""
 		Forward pass through the world model.
 		"""
-		_, h = self.rnn(z, a, task, h, dt=dt)
-		z_next = self.next(z, a, h, task)
+		z_next = self.next(h, a, task)
+		_, h = self.rnn(z_next, a, task, h, dt=dt)
 		return z_next, h
 	
-	def reward(self, z, a, h, task=None):
+	def reward(self, h, a, task=None):
 		"""
 		Predicts instantaneous (single-step) reward.
 		"""
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-		z = torch.cat([z, a, h], dim=-1)
+		# if self.cfg.multitask:
+		# 	z = self.task_emb(z, task)
+		z = torch.cat([h, a], dim=-1)
 		return self._reward(z)
 
-	def pi(self, z, h, task=None):
+	def pi(self, h, task=None):
 		"""
 		Samples an action from the policy prior.
 		The policy prior is a Gaussian distribution with
 		mean and (log) std predicted by a neural network.
 		"""
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
-
-		z = torch.cat([z, h], dim=-1)
+		# if self.cfg.multitask:
+		# 	z = self.task_emb(z, task)
+		#
+		# z = torch.cat([z, h], dim=-1)
 
 		# Gaussian policy prior
-		mu, log_std = self._pi(z).chunk(2, dim=-1)
+		mu, log_std = self._pi(h).chunk(2, dim=-1)
 		log_std = math.log_std(log_std, self.log_std_min, self.log_std_dif)
 		eps = torch.randn_like(mu)
 
@@ -206,7 +207,7 @@ class WorldModel(nn.Module):
 
 		return mu, pi, log_pi, log_std
 
-	def Q(self, z, a, h, task=None, return_type='min', target=False, detach=False):
+	def Q(self, h, a, task=None, return_type='min', target=False, detach=False):
 		"""
 		Predict state-action value.
 		`return_type` can be one of [`min`, `avg`, `all`]:
@@ -217,10 +218,10 @@ class WorldModel(nn.Module):
 		"""
 		assert return_type in {'min', 'avg', 'all'}
 
-		if self.cfg.multitask:
-			z = self.task_emb(z, task)
+		# if self.cfg.multitask:
+		# 	z = self.task_emb(z, task)
 
-		z = torch.cat([z, a, h], dim=-1)
+		z = torch.cat([h, a], dim=-1)
 		if target:
 			qnet = self._target_Qs
 		elif detach:

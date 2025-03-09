@@ -157,3 +157,11 @@ def enc(cfg, out={}):
 		else:
 			raise NotImplementedError(f"Encoder for observation type {k} not implemented.")
 	return nn.ModuleDict(out)
+
+	# do not encode state
+	# for k in cfg.obs_shape.keys():
+	# 	if k == 'state':
+	# 		out[k] = nn.Sequential(nn.Identity())
+	# return nn.ModuleDict(out)
+
+

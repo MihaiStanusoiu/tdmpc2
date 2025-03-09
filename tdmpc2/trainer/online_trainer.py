@@ -32,14 +32,14 @@ class OnlineTrainer(Trainer):
 		video_saved = False
 		for i in range(self.cfg.eval_episodes):
 			obs, done, ep_reward, t, hidden, info = self.env.reset(), False, 0, 0, self.agent.initial_h.detach(),  {'timestamp': self.env.get_timestep()}
+			action = torch.zeros(self.env.action_space.shape)
 			times = []
 			if self.cfg.save_video:
 				# self.logger.video.init(self.env, enabled=(i == 0))
 				self.logger.video.init(self.env, enabled=True)
 			while not done:
-				torch.compiler.cudagraph_mark_step_begin()
 				start_time = time_ns()
-				action, hidden = self.agent.act(obs, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action, hidden = self.agent.act(obs, action, t0=t==0, h=hidden, info=info, eval_mode=True)
 				end_time = time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = self.env.step(action)
@@ -161,6 +161,7 @@ class OnlineTrainer(Trainer):
 						self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
 				obs = self.env.reset()
+				action = torch.zeros(self.env.action_space.shape)
 				info = {'timestamp': self.env.get_timestep()}
 				is_first = True
 				h = self.agent.initial_h.detach()
@@ -181,7 +182,7 @@ class OnlineTrainer(Trainer):
 						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 						with torch.no_grad():
 							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
-				action, h_next = self.agent.act(obs, t0=len(self._tds)==1, h=h, info=info)
+				action, h_next = self.agent.act(obs, action, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)

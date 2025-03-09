@@ -95,4 +95,5 @@ def make_env(cfg):
 	cfg.action_dim = env.action_space.shape[0]
 	cfg.episode_length = env.max_episode_steps
 	cfg.seed_steps = max(1000, 5*cfg.episode_length)
+	# cfg.seed_steps = 200
 	return env
