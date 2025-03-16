@@ -22,7 +22,7 @@ class Buffer():
 			strict_length=True,
 			compile=self.cfg.compile
 		)
-		self._batch_size = cfg.batch_size * (cfg.horizon+cfg.burn_in+1)
+		self._batch_size = cfg.batch_size * (cfg.horizon+1)
 		# self._batch_size = cfg.batch_size
 		self._num_eps = 0
 
@@ -73,18 +73,20 @@ class Buffer():
 		Prepare a sampled batch for training (post-processing).
 		Expects `td` to be a TensorDict with batch size TxB.
 		"""
-		td = td.select("obs", "action", "reward", "dt", "done", "is_first", "task", strict=False).to(self._device, non_blocking=True)
+		td = td.select("obs", "action", "hist_obs", "hist_act", "reward", "dt", "done", "is_first", "task", strict=False).to(self._device, non_blocking=True)
 		obs = td.get('obs').contiguous()
 		action = td.get('action').contiguous()
-		reward = td.get('reward')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
+		hist_obs = td.get('hist_obs').contiguous()
+		hist_act = td.get('hist_act').contiguous()
+		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
 		# check if any done value is true, or 1.0
-		done = td.get('done')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
+		done = td.get('done')[1:].unsqueeze(-1).contiguous()
 		dt = td.get('dt').unsqueeze(-1).contiguous()
 		is_first = td['is_first'].contiguous()
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
-		return obs, action, reward, done, dt, is_first, task
+		return obs, action, hist_obs, hist_act, reward, done, dt, is_first, task
 
 	def add(self, td):
 		"""Add an episode to the buffer."""
@@ -116,6 +118,6 @@ class Buffer():
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
-		td = self._buffer.sample().view(-1, self.cfg.horizon+self.cfg.burn_in+1).permute(1, 0)
+		td = self._buffer.sample().view(-1, self.cfg.horizon+1).permute(1, 0)
 		# td = self._buffer.sample()
 		return self._prepare_batch(td)

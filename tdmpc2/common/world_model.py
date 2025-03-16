@@ -18,7 +18,7 @@ class WorldModel(nn.Module):
 
 	def __init__(self, cfg):
 		super().__init__()
-		# cfg.latent_dim = cfg.obs_shape['state'][0]
+		cfg.latent_dim = cfg.obs_shape['state'][0]
 		self.cfg = cfg
 		if cfg.multitask:
 			self._task_emb = nn.Embedding(len(cfg.tasks), cfg.task_dim, max_norm=1)

@@ -1,6 +1,5 @@
 import os
 
-import functorch
 import torch
 import torch.nn.functional as F
 
@@ -28,8 +27,8 @@ class TDMPC2(torch.nn.Module):
 		if self.cfg.compile:
 			self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
-			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
-			{'params': self.model._rnn.parameters(), 'lr': self.cfg.lr*self.cfg.rnn_lr_scale},
+			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
+			{'params': self.model._rnn.parameters()},
 			{'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
@@ -166,7 +165,7 @@ class TDMPC2(torch.nn.Module):
 	@property
 	def initial_h(self):
 		if self.cfg.learned_init_h:
-			return torch.nn.Sigmoid()(self.model.initial_h)
+			return torch.tanh(self.model.initial_h)
 		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
 	@torch.no_grad()
@@ -389,7 +388,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, prev_dt, prev_is_first, obs, action, reward, dt, is_first, task=None):
+	def _update(self, prev_obs, prev_action, obs, action, reward, dt, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -400,6 +399,8 @@ class TDMPC2(torch.nn.Module):
 			dict: Dictionary of training statistics.
 		"""
 
+		h = self.initial_h.repeat(self.cfg.batch_size, 1)
+
 		with torch.no_grad():
 			next_z = self.model.encode(obs[1:], task)
 			next_act = action[1:]
@@ -408,23 +409,22 @@ class TDMPC2(torch.nn.Module):
 		# Prepare for update
 		self.model.train()
 
-		# Encoding memory
-		h = self.initial_h.repeat(self.cfg.batch_size, 1)
-
-		# Burn-in rollout
 		if self.cfg.warmup_h:
+			with torch.no_grad():
+				if prev_obs is not None:
+					# ignore prev_obs and prev_act that are zero
+					mask = (prev_obs[0].abs().sum(dim=-1) > 0)  # Shape (seq_len, batch_size)
+					# first_nonzero_idx = mask.int().argmax(dim=1)  # Shape (batch_size,)
+					# prev_obs = [prev_obs[0][first_nonzero_idx[i]:, i] for i in range(self.cfg.batch_size)]
+					# prev_obs = prev_obs[0][:, first_nonzero_idx:-1, :]
+					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
+					prev_z = self.model.encode(prev_obs, task)
+					for _, (_a, _z) in enumerate(
+							zip(prev_action[0][:, :-1, :].unbind(1), prev_z[0][:, :-1, :].unbind(1))):
+						_, h = self.model.rnn(_z, _a, task, h)
 
-			_, h = self.model.rnn(self.model.encode(prev_obs[0]), prev_action[0], task, h, dt[0])
-
-			# h = prev_hidden[0].detach()
-			prev_obs = prev_obs[1:]
-			prev_action = prev_action[1:]
-			prev_dt = prev_dt[1:]
-			for t, (_a, _obs, _dt, _is_first) in enumerate(
-						zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0), prev_is_first.unbind(0))):
-				z = self.model.encode(_obs, task).detach()
-				z_hat = self.model.next(h, _a, task)
-				_, h = self.model.rnn(z, _a, task, h, _dt)
+		# Prepare for update
+		self.model.train()
 
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
@@ -532,11 +532,11 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, done, dt, is_first, task = buffer.sample()
+		obs, action, hist_obs, hist_act, reward, done, dt, is_first, task = buffer.sample()
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], dt[:self.cfg.burn_in], is_first[:self.cfg.burn_in], obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first[self.cfg.burn_in:], **kwargs)
+		return self._update(hist_obs, hist_act, obs, action, reward, dt, is_first, **kwargs)
 

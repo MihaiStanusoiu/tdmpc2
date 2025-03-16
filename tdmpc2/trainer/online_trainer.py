@@ -66,7 +66,7 @@ class OnlineTrainer(Trainer):
 			episode_runtime_std=np.nanmean(ep_runtime_stds),
 		)
 
-	def to_td(self, obs, action=None, reward=None, done=False, dt=None, is_first=False):
+	def to_td(self, obs, action=None, hist_obs=None, hist_act=None, reward=None, done=False, dt=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -74,6 +74,10 @@ class OnlineTrainer(Trainer):
 			obs = obs.unsqueeze(0).cpu()
 		if action is None:
 			action = torch.full_like(self.env.rand_act(), 0.0)
+		if hist_obs is None:
+			hist_obs = torch.zeros((self.cfg.burn_in, obs.shape[-1]))
+		if hist_act is None:
+			hist_act = torch.zeros((self.cfg.burn_in, action.shape))
 		if reward is None:
 			reward = torch.tensor(float('nan'))
 		if dt is not None:
@@ -81,11 +85,13 @@ class OnlineTrainer(Trainer):
 		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
+			hist_obs=hist_obs.unsqueeze(0),
+			hist_act=hist_act.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			done=torch.tensor(done, dtype=torch.float).unsqueeze(0),
 			dt=dt.unsqueeze(0),
 			is_first=torch.ones((1, 1), dtype=torch.float) if is_first else torch.zeros((1, 1), dtype=torch.float),
-		batch_size=(1,))
+			batch_size=(1,))
 		return td
 
 	def save(self, metrics, identifier='model'):
@@ -163,30 +169,48 @@ class OnlineTrainer(Trainer):
 				obs = self.env.reset()
 				action = torch.zeros(self.env.action_space.shape)
 				info = {'timestamp': self.env.get_timestep()}
+				hist_obs = torch.zeros((self.cfg.burn_in, obs.shape[0]))
+				hist_act = torch.zeros((self.cfg.burn_in, self.cfg.action_dim))
+				hist_obs[-1] = obs
+				hist_act[-1] = action
+				hist_len = 0
 				is_first = True
 				h = self.agent.initial_h.detach()
-				self._tds = [self.to_td(obs, done=False, dt=info.get("timestamp") or None, is_first=True)]
+				self._tds = [
+					self.to_td(obs, hist_obs=hist_obs, hist_act=hist_act, done=False, dt=info.get("timestamp") or None,
+							   is_first=True)]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
-				if self.cfg.warmup_h:
-					# h warmup
-					h = self.agent.initial_h.detach()
-					if len(self._tds) > 1:
-						burn_in_tds = self._tds[-self.cfg.burn_in:-1]
-						prev_obs = [td['obs'] for td in burn_in_tds]
-						prev_act = [td['action'] for td in burn_in_tds]
-						prev_dt = [td['dt'] for td in burn_in_tds]
-						prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
-						prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
-						prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
-						with torch.no_grad():
-							_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
+				# if self.cfg.warmup_h:
+				# 	# h warmup
+				# 	h = self.agent.initial_h.detach()
+				# 	if len(self._tds) > 1:
+				# 		burn_in_tds = self._tds[-self.cfg.burn_in:-1]
+				# 		prev_obs = [td['obs'] for td in burn_in_tds]
+				# 		prev_act = [td['action'] for td in burn_in_tds]
+				# 		prev_dt = [td['dt'] for td in burn_in_tds]
+				# 		prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
+				# 		prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
+				# 		prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
+				# 		with torch.no_grad():
+				# 			_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
 				action, h_next = self.agent.act(obs, action, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()
+
+			if hist_len == self.cfg.burn_in:
+				hist_obs[:self.cfg.burn_in - 1] = hist_obs[1:].clone()
+				hist_act[:self.cfg.burn_in - 1] = hist_act[1:].clone()
+				hist_obs[-1] = obs
+				hist_act[-1] = action
+			else:
+				hist_obs[hist_len] = obs
+				hist_act[hist_len] = action
+				hist_len += 1
+
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, done, info.get('timestamp') or None, is_first=False))
+			self._tds.append(self.to_td(obs, action, hist_obs, hist_act, reward, done, info.get('timestamp') or None, is_first=False))
 			h = h_next
 
 			# Update agent
