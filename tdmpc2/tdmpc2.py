@@ -413,15 +413,16 @@ class TDMPC2(torch.nn.Module):
 			with torch.no_grad():
 				if prev_obs is not None:
 					# ignore prev_obs and prev_act that are zero
-					mask = (prev_obs[0].abs().sum(dim=-1) > 0)  # Shape (seq_len, batch_size)
-					# first_nonzero_idx = mask.int().argmax(dim=1)  # Shape (batch_size,)
-					# prev_obs = [prev_obs[0][first_nonzero_idx[i]:, i] for i in range(self.cfg.batch_size)]
-					# prev_obs = prev_obs[0][:, first_nonzero_idx:-1, :]
-					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
 					prev_z = self.model.encode(prev_obs, task)
 					for _, (_a, _z) in enumerate(
 							zip(prev_action[0][:, :-1, :].unbind(1), prev_z[0][:, :-1, :].unbind(1))):
-						_, h = self.model.rnn(_z, _a, task, h)
+						# get indices of non-zero z
+						non_zero_indices = torch.nonzero(_z.sum(-1), as_tuple=True)[0]
+						if len(non_zero_indices) > 0:
+							valid_z = _z[non_zero_indices]
+							valid_a = _a[non_zero_indices]
+							_, h[non_zero_indices] = self.model.rnn(valid_z, valid_a, task, h[non_zero_indices])
+						# _, h = self.model.rnn(_z, _a, task, h)
 
 		# Prepare for update
 		self.model.train()

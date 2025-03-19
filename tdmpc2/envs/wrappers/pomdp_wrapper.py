@@ -76,7 +76,10 @@ class POMDPWrapper(Wrapper):
         elif self.pomdp_type == 'flickering':
             # Note: flickering is equivalent to:
             #   flickering_and_random_sensor_missing, random_noise_and_flickering, random_sensor_missing_and_flickering
-            return obs, info
+            if np.random.rand() <= self.flicker_prob:
+                return np.zeros(obs.shape), info
+            else:
+                return obs.flatten(), info
         elif self.pomdp_type == 'random_noise':
             return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten(), info
         elif self.pomdp_type == 'random_sensor_missing':
@@ -103,8 +106,12 @@ class POMDPWrapper(Wrapper):
             return new_obs, info
         elif self.pomdp_type == 'flickering_and_random_noise':
             # Flickering
+            if np.random.rand() <= self.flicker_prob:
+                new_obs = np.zeros(obs.shape)
+            else:
+                new_obs = obs
             # Add random noise
-            return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
+            return (new_obs + np.random.normal(0, self.random_noise_sigma, new_obs.shape)).flatten()
         elif self.pomdp_type == 'random_noise_and_random_sensor_missing':
             # Random noise
             new_obs = (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
