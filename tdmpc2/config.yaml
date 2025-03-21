@@ -33,6 +33,7 @@ consistency_coef: 20
 rho: 0.8
 lr: 3e-4
 burn_in: 10
+stored_h: false
 enc_lr_scale: 0.3
 rnn_lr_scale: 10.0
 grad_clip_norm: 10
@@ -40,6 +41,7 @@ tau: 0.01
 discount_denom: 5
 discount_min: 0.95
 discount_max: 0.995
+lmbda: 0.5
 buffer_size: 1_000_000
 exp_name: default
 data_dir: ???

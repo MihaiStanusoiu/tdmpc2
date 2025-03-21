@@ -66,7 +66,7 @@ class OnlineTrainer(Trainer):
 			episode_runtime_std=np.nanmean(ep_runtime_stds),
 		)
 
-	def to_td(self, obs, action=None, hist_obs=None, hist_act=None, reward=None, done=False, dt=None, is_first=False):
+	def to_td(self, obs, action=None, hist_obs=None, hist_act=None,  hidden=None, reward=None, done=False, dt=None, is_first=False):
 		"""Creates a TensorDict for a new episode."""
 		if isinstance(obs, dict):
 			obs = TensorDict(obs, batch_size=(), device='cpu')
@@ -74,6 +74,12 @@ class OnlineTrainer(Trainer):
 			obs = obs.unsqueeze(0).cpu()
 		if action is None:
 			action = torch.full_like(self.env.rand_act(), 0.0)
+		if hist_obs is None:
+			hist_obs = torch.zeros((self.cfg.burn_in, obs.shape[-1]))
+		if hist_act is None:
+			hist_act = torch.zeros((self.cfg.burn_in, action.shape))
+		if hidden is None:
+			hidden = self.agent.initial_h.detach()
 		if hist_obs is None:
 			hist_obs = torch.zeros((self.cfg.burn_in, obs.shape[-1]))
 		if hist_act is None:
@@ -87,6 +93,7 @@ class OnlineTrainer(Trainer):
 			action=action.unsqueeze(0),
 			hist_obs=hist_obs.unsqueeze(0),
 			hist_act=hist_act.unsqueeze(0),
+			hidden=hidden.cpu().clone(),
 			reward=reward.unsqueeze(0),
 			done=torch.tensor(done, dtype=torch.float).unsqueeze(0),
 			dt=dt.unsqueeze(0),
@@ -177,7 +184,7 @@ class OnlineTrainer(Trainer):
 				is_first = True
 				h = self.agent.initial_h.detach()
 				self._tds = [
-					self.to_td(obs, hist_obs=hist_obs, hist_act=hist_act, done=False, dt=info.get("timestamp") or None,
+					self.to_td(obs, hidden=h, hist_obs=hist_obs, hist_act=hist_act, done=False, dt=info.get("timestamp") or None,
 							   is_first=True)]
 
 			# Collect experience
@@ -199,18 +206,19 @@ class OnlineTrainer(Trainer):
 			else:
 				action = self.env.rand_act()
 
-			if hist_len == self.cfg.burn_in:
-				hist_obs[:self.cfg.burn_in - 1] = hist_obs[1:].clone()
-				hist_act[:self.cfg.burn_in - 1] = hist_act[1:].clone()
-				hist_obs[-1] = obs
-				hist_act[-1] = action
-			else:
-				hist_obs[hist_len] = obs
-				hist_act[hist_len] = action
-				hist_len += 1
+			if self.cfg.burn_in > 0:
+				if hist_len == self.cfg.burn_in:
+					hist_obs[:self.cfg.burn_in - 1] = hist_obs[1:].clone()
+					hist_act[:self.cfg.burn_in - 1] = hist_act[1:].clone()
+					hist_obs[-1] = obs
+					hist_act[-1] = action
+				else:
+					hist_obs[hist_len] = obs
+					hist_act[hist_len] = action
+					hist_len += 1
 
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, hist_obs, hist_act, reward, done, info.get('timestamp') or None, is_first=False))
+			self._tds.append(self.to_td(obs, action, hist_obs, hist_act, h_next,  reward, done, info.get('timestamp') or None, is_first=False))
 			h = h_next
 
 			# Update agent

@@ -356,6 +356,17 @@ class TDMPC2(torch.nn.Module):
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
 		return reward + discount * self.model.Q(hs, pis, task, return_type='min', target=True)
 
+	@torch.no_grad()
+	def _td_lambda_target(self, next_z, next_a, hs, reward, dt, task):
+		pis = self.model.pi(hs, task)[1]
+		qs = self.model.Q(hs, pis, task, return_type='min', target=True)
+		Rs = [qs[-1]]
+		intermediates = (reward + self.discount * (1 - self.cfg.lmbda) * qs)
+		for t in reversed(range(self.cfg.horizon - 1)):
+			Rs.append(intermediates[t] + self.discount * self.cfg.lmbda * Rs[-1])
+
+		return torch.stack(list(reversed(Rs)), dim=0)
+
 	@staticmethod
 	def _mask(value, mask):
 		# Apply element-wise multiplication with broadcasting in PyTorch
@@ -388,7 +399,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, obs, action, reward, dt, is_first, task=None):
+	def _update(self, prev_obs, prev_action, hidden, obs, action, reward, dt, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -399,30 +410,26 @@ class TDMPC2(torch.nn.Module):
 			dict: Dictionary of training statistics.
 		"""
 
-		h = self.initial_h.repeat(self.cfg.batch_size, 1)
+		h = hidden
 
 		with torch.no_grad():
 			next_z = self.model.encode(obs[1:], task)
 			next_act = action[1:]
 			next_dt = dt[1:]
 
-		# Prepare for update
-		self.model.train()
-
 		if self.cfg.warmup_h:
 			with torch.no_grad():
 				if prev_obs is not None:
 					# ignore prev_obs and prev_act that are zero
+					mask = (prev_obs[0].abs().sum(dim=-1) > 0)  # Shape (seq_len, batch_size)
+					# first_nonzero_idx = mask.int().argmax(dim=1)  # Shape (batch_size,)
+					# prev_obs = [prev_obs[0][first_nonzero_idx[i]:, i] for i in range(self.cfg.batch_size)]
+					# prev_obs = prev_obs[0][:, first_nonzero_idx:-1, :]
+					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
 					prev_z = self.model.encode(prev_obs, task)
 					for _, (_a, _z) in enumerate(
 							zip(prev_action[0][:, :-1, :].unbind(1), prev_z[0][:, :-1, :].unbind(1))):
-						# get indices of non-zero z
-						non_zero_indices = torch.nonzero(_z.sum(-1), as_tuple=True)[0]
-						if len(non_zero_indices) > 0:
-							valid_z = _z[non_zero_indices]
-							valid_a = _a[non_zero_indices]
-							_, h[non_zero_indices] = self.model.rnn(valid_z, valid_a, task, h[non_zero_indices])
-						# _, h = self.model.rnn(_z, _a, task, h)
+						_, h = self.model.rnn(_z, _a, task, h)
 
 		# Prepare for update
 		self.model.train()
@@ -467,10 +474,15 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_lambda_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
+		# for _, qs_unbind in enumerate(qs.unbind(0)):
+		# 	value_loss = value_loss + math.soft_ce(qs_unbind[0], td_targets[0],
+		# 										   self.cfg).mean()
+
 		for t, (rew_pred_unbind, rew_unbind, td_targets_unbind, qs_unbind) in enumerate(zip(reward_preds.unbind(0), reward.unbind(0), td_targets.unbind(0), qs.unbind(1))):
 			reward_loss = reward_loss + math.soft_ce(rew_pred_unbind, rew_unbind, self.cfg).mean() * self.cfg.rho**t
 			for _, qs_unbind_unbind in enumerate(qs_unbind.unbind(0)):
@@ -479,6 +491,7 @@ class TDMPC2(torch.nn.Module):
 		consistency_loss = consistency_loss / self.cfg.horizon
 		reward_loss = reward_loss / self.cfg.horizon
 		value_loss = value_loss / (self.cfg.horizon * self.cfg.num_q)
+		# value_loss = value_loss / (self.cfg.num_q)
 		total_loss = (
 			self.cfg.consistency_coef * consistency_loss +
 			self.cfg.reward_coef * reward_loss +
@@ -533,11 +546,23 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, hist_obs, hist_act, reward, done, dt, is_first, task = buffer.sample()
+		obs, action, hist_obs, hist_act, hidden, reward, done, dt, is_first, task = buffer.sample()
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
+		# prev_obs = torch.empty(0, device=self.device)
+		# prev_act = torch.empty(0, device=self.device)
+		# prev_dt = torch.empty(0, device=self.device)
+		# if self.cfg.burn_in > 0:
+		# 	prev_obs = obs[:self.cfg.burn_in]
+		# 	prev_act = action[:self.cfg.burn_in]
+		# 	prev_dt = dt[:self.cfg.burn_in]
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
-		return self._update(hist_obs, hist_act, obs, action, reward, dt, is_first, **kwargs)
+		# return self._update(prev_obs, prev_act, prev_dt, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
+		if self.cfg.stored_h:
+			h = hidden.detach()
+		else:
+			h = self.initial_h.repeat(self.cfg.batch_size, 1)
+		return self._update(hist_obs, hist_act, h, obs, action, reward, dt, is_first, **kwargs)
 

@@ -73,11 +73,12 @@ class Buffer():
 		Prepare a sampled batch for training (post-processing).
 		Expects `td` to be a TensorDict with batch size TxB.
 		"""
-		td = td.select("obs", "action", "hist_obs", "hist_act", "reward", "dt", "done", "is_first", "task", strict=False).to(self._device, non_blocking=True)
+		td = td.select("obs", "action", "hist_obs", "hist_act", "hidden", "reward", "dt", "done", "is_first", "task", strict=False).to(self._device, non_blocking=True)
 		obs = td.get('obs').contiguous()
 		action = td.get('action').contiguous()
 		hist_obs = td.get('hist_obs').contiguous()
 		hist_act = td.get('hist_act').contiguous()
+		hidden = td.get('hidden')[0]
 		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
 		# check if any done value is true, or 1.0
 		done = td.get('done')[1:].unsqueeze(-1).contiguous()
@@ -86,7 +87,7 @@ class Buffer():
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
-		return obs, action, hist_obs, hist_act, reward, done, dt, is_first, task
+		return obs, action, hist_obs, hist_act, hidden,  reward, done, dt, is_first, task
 
 	def add(self, td):
 		"""Add an episode to the buffer."""
