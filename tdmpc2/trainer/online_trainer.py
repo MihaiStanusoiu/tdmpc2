@@ -93,7 +93,7 @@ class OnlineTrainer(Trainer):
 			action=action.unsqueeze(0),
 			hist_obs=hist_obs.unsqueeze(0),
 			hist_act=hist_act.unsqueeze(0),
-			hidden=hidden.cpu().clone(),
+			hidden=hidden.cpu().numpy(),
 			reward=reward.unsqueeze(0),
 			done=torch.tensor(done, dtype=torch.float).unsqueeze(0),
 			dt=dt.unsqueeze(0),

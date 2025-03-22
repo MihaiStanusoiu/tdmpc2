@@ -561,7 +561,8 @@ class TDMPC2(torch.nn.Module):
 		# h = self._burn_in_rollout(obs[0], obs[1:self.cfg.burn_in+1], action[:self.cfg.burn_in], hidden[:self.cfg.burn_in], is_first[:self.cfg.burn_in], **kwargs)
 		# return self._update(prev_obs, prev_act, prev_dt, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
 		if self.cfg.stored_h:
-			h = hidden.detach()
+			# numpy to tensor
+			h = torch.tensor(hidden, device=self.device).detach()
 		else:
 			h = self.initial_h.repeat(self.cfg.batch_size, 1)
 		return self._update(hist_obs, hist_act, h, obs, action, reward, dt, is_first, **kwargs)
