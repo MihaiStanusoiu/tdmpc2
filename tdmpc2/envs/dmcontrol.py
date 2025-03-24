@@ -161,7 +161,7 @@ class TimeStepToGymWrapper:
 		self.max_episode_steps = 500
 		self.t = 0
 		self.ts = 0.0
-		self.delay_enabled = 'flickering' in cfg.pomdp_type
+		self.delay_enabled = 'latency' in cfg.pomdp_type
 		# if self.domain == 'acrobot':
 		# 	self.dm_env._physics.model.opt.timestep /= 10
 		# 	self.dm_env._n_sub_steps = 10

@@ -218,7 +218,7 @@ class OnlineTrainer(Trainer):
 					hist_len += 1
 
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, hist_obs, hist_act, h_next,  reward, done, info.get('timestamp') or None, is_first=False))
+			self._tds.append(self.to_td(obs, action, hist_obs, hist_act, h,  reward, done, info.get('timestamp') or None, is_first=False))
 			h = h_next
 
 			# Update agent
