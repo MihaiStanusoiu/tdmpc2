@@ -191,9 +191,9 @@ class TDMPC2(torch.nn.Module):
 			tensor_dt = None
 			if info.get("timestamp") is not None:
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
-			_, h = self.model.rnn(z, prev_act, task, h, dt=tensor_dt)
+			z, h = self.model.rnn(z, prev_act, task, h, dt=tensor_dt)
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
+			a = self.plan(z, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 		else:
 			z = self.model.encode(obs, task)
 			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
@@ -205,7 +205,7 @@ class TDMPC2(torch.nn.Module):
 		G, discount = 0, 1
 		for t in range(self.cfg.plan_horizon):
 			reward = math.two_hot_inv(self.model.reward(h, actions[t], task), self.cfg)
-			z, h = self.model.forward(h, actions[t], task, dt=dt)
+			h = self.model.forward(h, actions[t], task, dt=dt)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
@@ -232,7 +232,7 @@ class TDMPC2(torch.nn.Module):
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.plan_horizon-1):
 				pi_actions[t] = self.model.pi(_h, task)[1]
-				_z, _h = self.model.forward(_h, pi_actions[t], task, dt=_dt)
+				_h = self.model.forward(_h, pi_actions[t], task, dt=_dt)
 			pi_actions[-1] = self.model.pi(_h, task)[1]
 
 		# Initialize state and parameters
@@ -438,19 +438,21 @@ class TDMPC2(torch.nn.Module):
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		hs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.hidden_dim, device=self.device)
 
-		z = self.model.encode(obs[0], task)
-		_, h = self.model.rnn(z, action[0], task, h, dt[0])
+		o = self.model.encode(obs[0], task)
+		z, h = self.model.rnn(o, action[0], task, h, dt[0])
 		zs[0] = z
 		hs[0] = h
 		one_step_prediction_error = 0
 		consistency_loss = 0
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(next_act.unbind(0), next_z.unbind(0), next_dt.unbind(0), is_first.unbind(0))):
-			z = self.model.next(h, _action, task)
+			z = self.model.next(z, _action, task)
 			# z, h = self.model.forward(h, _action, task, dt=_dt)
-			_, h = self.model.rnn(_next_z, _action, task, h, _dt)
-			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * (self.cfg.rho) ** (t)
+			z_hat, h = self.model.rnn(_next_z, _action, task, h, _dt)
+			consistency_loss = consistency_loss + F.mse_loss(z, z_hat.detach()) * (self.cfg.rho) ** (t)
 			if t == 0:
 				one_step_prediction_error = consistency_loss
+			# if t < self.cfg.horizon / 2:
+			z = z_hat
 			zs[t+1] = z
 			hs[t+1] = h
 
@@ -469,13 +471,13 @@ class TDMPC2(torch.nn.Module):
 		# 	q_discrepancy_t = q_discrepancy[0]
 		# 	q_discrepancy_H = q_discrepancy[-1]
 
-		qs = self.model.Q(_hs, next_act, task, return_type='all')
-		reward_preds = self.model.reward(_hs, next_act, task)
+		qs = self.model.Q(_zs, next_act, task, return_type='all')
+		reward_preds = self.model.reward(_zs, next_act, task)
 
 		# Compute targets
 		with torch.no_grad():
 			# td_targets = self._td_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
-			td_targets = self._td_lambda_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_lambda_target(next_z, next_act, zs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -508,7 +510,7 @@ class TDMPC2(torch.nn.Module):
 
 		if not self.cfg.freeze_pi:
 			# Update policy
-			pi_loss, pi_grad_norm = self.update_pi(hs.detach(),dt, task)
+			pi_loss, pi_grad_norm = self.update_pi(_zs.detach(),dt, task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
@@ -565,5 +567,5 @@ class TDMPC2(torch.nn.Module):
 			h = torch.tensor(hidden, device=self.device).detach()
 		else:
 			h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		return self._update(hist_obs, hist_act, h, obs, action, reward, dt, is_first, **kwargs)
+		return self._update(None, None, h, obs, action, reward, dt, is_first, **kwargs)
 

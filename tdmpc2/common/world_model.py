@@ -18,7 +18,7 @@ class WorldModel(nn.Module):
 
 	def __init__(self, cfg):
 		super().__init__()
-		cfg.latent_dim = cfg.obs_shape['state'][0]
+		cfg.obs_dim = cfg.obs_shape['state'][0]
 		self.cfg = cfg
 		if cfg.multitask:
 			self._task_emb = nn.Embedding(len(cfg.tasks), cfg.task_dim, max_norm=1)
@@ -27,26 +27,26 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		if cfg.rnn_type == 'cfc':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+			self._rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
 		elif cfg.rnn_type == 'cfc_pure':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+			self._rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False,
 							return_sequences=False)
 		elif cfg.rnn_type == 'ltc':
-			self._rnn = LTC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
+			self._rnn = LTC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
 		elif cfg.rnn_type == 'lstm':
-			self._rnn = nn.LSTM(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False)
-		self._dynamics = layers.mlp(cfg.hidden_dim + cfg.action_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=None)
+			self._rnn = nn.LSTM(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False)
+		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=None)
 		# self._dynamics = NormedLinear(cfg.hidden_dim, cfg.latent_dim, act=layers.SimNorm(cfg))
 		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
 		# self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.hidden_dim	 + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._pi = layers.mlp(cfg.hidden_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.hidden_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+		self._reward = layers.mlp(cfg.latent_dim	 + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
+		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
 		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
 
@@ -160,13 +160,13 @@ class WorldModel(nn.Module):
 		z_next = self._dynamics(z)
 		return z_next
 
-	def forward(self, h, a, task=None, dt=None):
+	def forward(self, z, a, task=None, dt=None):
 		"""
 		Forward pass through the world model.
 		"""
-		z_next = self.next(h, a, task)
-		_, h = self.rnn(z_next, a, task, h, dt=dt)
-		return z_next, h
+		z_next = self.next(z, a, task)
+		# _, h = self.rnn(z_next, a, task, h, dt=dt)
+		return z_next
 	
 	def reward(self, h, a, task=None):
 		"""
