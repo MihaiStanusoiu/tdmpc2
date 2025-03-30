@@ -26,7 +26,7 @@ use_tensorboard: True
 # training
 freeze_pi: false
 steps: 10_000_000
-batch_size: 256
+batch_size: 1
 reward_coef: 0.1
 value_coef: 0.1
 consistency_coef: 20

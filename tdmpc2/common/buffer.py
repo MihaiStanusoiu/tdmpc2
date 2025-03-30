@@ -74,16 +74,16 @@ class Buffer():
 		Expects `td` to be a TensorDict with batch size TxB.
 		"""
 		td = td.select("obs", "action", "hist_obs", "hist_act", "hidden", "reward", "dt", "done", "is_first", "task", strict=False).to(self._device, non_blocking=True)
-		obs = td.get('obs').contiguous()
-		action = td.get('action').contiguous()
-		hist_obs = td.get('hist_obs').contiguous()
-		hist_act = td.get('hist_act').contiguous()
-		hidden = td.get('hidden')[0]
-		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
+		obs = td.get('obs').contiguous().unsqueeze(1)
+		action = td.get('action').contiguous().unsqueeze(1)
+		hist_obs = td.get('hist_obs').contiguous().unsqueeze(1)
+		hist_act = td.get('hist_act').contiguous().unsqueeze(1)
+		hidden = td.get('hidden')[0].unsqueeze(0)
+		reward = td.get('reward')[1:].unsqueeze(-1).contiguous().unsqueeze(1)
 		# check if any done value is true, or 1.0
-		done = td.get('done')[1:].unsqueeze(-1).contiguous()
-		dt = td.get('dt').unsqueeze(-1).contiguous()
-		is_first = td['is_first'].contiguous()
+		done = td.get('done')[1:].unsqueeze(-1).contiguous().unsqueeze(1)
+		dt = td.get('dt').unsqueeze(-1).contiguous().unsqueeze(1)
+		is_first = td['is_first'].contiguous().unsqueeze(1)
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
@@ -119,6 +119,6 @@ class Buffer():
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
-		td = self._buffer.sample().view(-1, self.cfg.horizon+1).permute(1, 0)
-		# td = self._buffer.sample()
+		# td = self._buffer.sample().view(-1, self.cfg.horizon+1).permute(1, 0)
+		td = self._buffer[-(self.cfg.horizon+1):]
 		return self._prepare_batch(td)
