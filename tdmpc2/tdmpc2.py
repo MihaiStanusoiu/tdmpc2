@@ -23,9 +23,9 @@ class TDMPC2(torch.nn.Module):
 		self.cfg = cfg
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
-		self.uncompiled_model = self.model
-		if self.cfg.compile:
-			self.model = torch.compile(self.model, mode="reduce-overhead")
+		# self.uncompiled_model = self.model
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.model, mode="reduce-overhead")
 		self.optim = torch.optim.Adam([
 			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
@@ -85,7 +85,7 @@ class TDMPC2(torch.nn.Module):
 			fp (str): Filepath to save state dict to.
 		"""
 		torch.save({
-			"model": self.uncompiled_model.state_dict(),
+			"model": self.model.state_dict(),
 			"wm_optim": self.optim.state_dict(),
 			"pi_optim": self.pi_optim.state_dict(),
 			"metrics": metrics,
@@ -157,9 +157,9 @@ class TDMPC2(torch.nn.Module):
 			return
 		# load_sd_hook(self.model, state_dict, "_Qs.")
 		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
-		self.uncompiled_model.load_state_dict(state_dict)
-		if self.cfg.compile:
-			self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
+		self.model.load_state_dict(state_dict)
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
 		return
 
 	@property
@@ -515,26 +515,23 @@ class TDMPC2(torch.nn.Module):
 
 		# Return training statistics
 		self.model.eval()
-		# self._first_update = False
-		info_dict = {
-			"consistency_loss": consistency_loss,
-			"reward_loss": reward_loss,
-			"value_loss": value_loss,
 
-			# "pi_loss": pi_loss,
-			"total_loss": total_loss,
-			# "Q_discrepancy_initial_state": q_discrepancy_t,
-			# "Q_discrepancy_final_state": q_discrepancy_H,
-			"one_step_prediction_error": one_step_prediction_error,
-			"grad_norm": grad_norm,
-			# "pi_grad_norm": pi_grad_norm,
-			"pi_scale": self.scale.value,
-		}
-		if not self.cfg.freeze_pi:
-			info_dict["pi_loss"] = pi_loss
-			info_dict["pi_grad_norm"] = pi_grad_norm
-		self.loss = info_dict
-		return TensorDict(self.loss).detach().mean()
+		return consistency_loss.detach(), reward_loss.detach(), value_loss.detach(), total_loss.detach(), one_step_prediction_error.detach(), grad_norm.detach(), pi_loss.detach(), pi_grad_norm.detach()
+		# self._first_update = False
+		# info_dict = {
+		# 	"consistency_loss": consistency_loss,
+		# 	"reward_loss": reward_loss,
+		# 	"value_loss": value_loss,
+		# 	"total_loss": total_loss,
+		# 	"one_step_prediction_error": one_step_prediction_error,
+		# 	"grad_norm": grad_norm,
+		# 	"pi_scale": self.scale.value,
+		# 	"pi_loss": pi_loss,
+		# 	"pi_grad_norm": pi_grad_norm
+		# }
+		# self.loss = info_dict
+		# return info_dict
+
 
 	def update(self, buffer):
 		"""
@@ -565,5 +562,17 @@ class TDMPC2(torch.nn.Module):
 			h = torch.tensor(hidden, device=self.device).detach()
 		else:
 			h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		return self._update(hist_obs, hist_act, h, obs, action, reward, dt, is_first, **kwargs)
+		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm = self._update(hist_obs, hist_act, h, obs, action, reward, dt, is_first, **kwargs)
+		self.loss = TensorDict({
+			"consistency_loss": consistency_loss,
+			"reward_loss": reward_loss,
+			"value_loss": value_loss,
+			"total_loss": total_loss,
+			"one_step_prediction_error": one_step_prediction_error,
+			"grad_norm": grad_norm,
+			"pi_scale": self.scale.value,
+			"pi_loss": pi_loss,
+			"pi_grad_norm": pi_grad_norm
+		})
+		return self.loss
 
