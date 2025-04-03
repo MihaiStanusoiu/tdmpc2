@@ -1,7 +1,7 @@
 MODEL_SIZE = { # parameters (M)
 	0.5: {'enc_dim': 256,
 		  'mlp_dim': 192,
-		  'hidden_dim': 64,
+		  'hidden_dim': 32,
 		  'backbone_units': 128,
 		  'backbone_layers': 1,
 		  'backbone_dropout': 0.0,

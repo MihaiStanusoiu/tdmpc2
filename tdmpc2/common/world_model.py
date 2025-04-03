@@ -53,6 +53,7 @@ class WorldModel(nn.Module):
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
 		self.init()
+		self._f_rnn = torch.compile(self._f_rnn, mode="reduce-overhead")
 
 	def init(self):
 		# Create params
@@ -139,6 +140,10 @@ class WorldModel(nn.Module):
 		return self._encoder[self.cfg.obs](obs)
 
 	def rnn(self, z, a, task=None, h=None, dt=None):
+		readout, h = self._f_rnn(z, a, task, h.clone(), dt)
+		return readout, h.clone()
+
+	def _f_rnn(self, z, a, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 		if z.dim() != 3:

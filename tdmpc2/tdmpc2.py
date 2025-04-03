@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -193,7 +194,7 @@ class TDMPC2(torch.nn.Module):
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
 			_, h = self.model.rnn(z, prev_act, task, h, dt=tensor_dt)
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
+			a = self.plan(h.clone(), t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 		else:
 			z = self.model.encode(obs, task)
 			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
@@ -421,14 +422,14 @@ class TDMPC2(torch.nn.Module):
 			with torch.no_grad():
 				if prev_obs is not None:
 					# ignore prev_obs and prev_act that are zero
-					mask = (prev_obs[0].abs().sum(dim=-1) > 0)  # Shape (seq_len, batch_size)
+					# mask = (prev_obs[0].abs().sum(dim=-1) > 0)  # Shape (seq_len, batch_size)
 					# first_nonzero_idx = mask.int().argmax(dim=1)  # Shape (batch_size,)
 					# prev_obs = [prev_obs[0][first_nonzero_idx[i]:, i] for i in range(self.cfg.batch_size)]
 					# prev_obs = prev_obs[0][:, first_nonzero_idx:-1, :]
 					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
 					prev_z = self.model.encode(prev_obs, task)
 					for _, (_a, _z) in enumerate(
-							zip(prev_action[0][:, :-1, :].unbind(1), prev_z[0][:, :-1, :].unbind(1))):
+							zip(prev_action.unbind(0), prev_z.unbind(0))):
 						_, h = self.model.rnn(_z, _a, task, h)
 
 		# Prepare for update
@@ -447,7 +448,10 @@ class TDMPC2(torch.nn.Module):
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(next_act.unbind(0), next_z.unbind(0), next_dt.unbind(0), is_first.unbind(0))):
 			z = self.model.next(h, _action, task)
 			# z, h = self.model.forward(h, _action, task, dt=_dt)
-			_, h = self.model.rnn(_next_z, _action, task, h, _dt)
+			rnn_input = _next_z
+			if t >= self.cfg.horizon / 2:
+				rnn_input = z
+			_, h = self.model.rnn(rnn_input, _action, task, h, _dt)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * (self.cfg.rho) ** (t)
 			if t == 0:
 				one_step_prediction_error = consistency_loss
@@ -516,7 +520,7 @@ class TDMPC2(torch.nn.Module):
 		# Return training statistics
 		self.model.eval()
 
-		return consistency_loss.detach(), reward_loss.detach(), value_loss.detach(), total_loss.detach(), one_step_prediction_error.detach(), grad_norm.detach(), pi_loss.detach(), pi_grad_norm.detach()
+		return consistency_loss.detach(), reward_loss.detach(), value_loss.detach(), total_loss.detach(), one_step_prediction_error.detach(), grad_norm.detach(), pi_loss.detach(), pi_grad_norm.detach(), hs.detach()
 		# self._first_update = False
 		# info_dict = {
 		# 	"consistency_loss": consistency_loss,
@@ -562,7 +566,12 @@ class TDMPC2(torch.nn.Module):
 			h = torch.tensor(hidden, device=self.device).detach()
 		else:
 			h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm = self._update(hist_obs, hist_act, h, obs, action, reward, dt, is_first, **kwargs)
+		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm, hs = self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], h, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
+		# log h rank
+		hs_TxB = hs.reshape(-1, hs.shape[-1])
+		hs_rank = torch.linalg.matrix_rank(hs_TxB, tol=1e-5)
+		_, S, _ = torch.linalg.svd(hs_TxB)
+		effective_rank = torch.exp(-torch.sum(S / (S.sum() + 1e-5) * torch.log(S / (S.sum() + 1e-5) + 1e-5)))
 		self.loss = TensorDict({
 			"consistency_loss": consistency_loss,
 			"reward_loss": reward_loss,
@@ -572,7 +581,9 @@ class TDMPC2(torch.nn.Module):
 			"grad_norm": grad_norm,
 			"pi_scale": self.scale.value,
 			"pi_loss": pi_loss,
-			"pi_grad_norm": pi_grad_norm
+			"pi_grad_norm": pi_grad_norm,
+			"hs_rank": hs_rank,
+			"hs_effective_rank": effective_rank
 		})
 		return self.loss
 

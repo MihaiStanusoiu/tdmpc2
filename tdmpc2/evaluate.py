@@ -2,7 +2,7 @@ import os
 import time
 
 from common.logger import Logger
-from common.plotting import plot_state_wm_state_correlation
+from common.plotting import plot_state_wm_state_correlation, plot_ep_rollout, plot_umap
 
 os.environ['MUJOCO_GL'] = 'egl'
 import warnings
@@ -99,7 +99,7 @@ def evaluate(cfg: dict):
 	# Load agent
 	agent = TDMPC2(cfg)
 
-	fp = logger.load_agent()
+	fp = logger.load_agent(version=cfg.checkpoint)
 	agent.load(fp)
 
 	# Evaluate
@@ -132,12 +132,18 @@ def evaluate(cfg: dict):
 			while not done:
 				# measure and log inference time
 				start_time = time.time_ns()
-				state.append(obs.numpy())
-				wm_state.append(hidden.cpu().numpy())
-				action, hidden = agent.act(obs, action, t0=t==0, h=hidden, info=info, eval_mode=True)
+				action, hidden_next = agent.act(obs, action, t0=t==0, h=hidden, info=info, eval_mode=True)
+				if t > 0:
+					s = obs.numpy()
+					if cfg.pomdp_type == 'remove_velocity':
+						s = info.get('full_obs')
+					state.append(s)
+					# append random numpy array to wm_state
+					wm_state.append(hidden.cpu().numpy())
 				end_time = time.time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = env.step(action)
+				hidden = hidden_next
 				ep_reward += reward
 				t += 1
 				if cfg.save_video:
@@ -166,19 +172,36 @@ def evaluate(cfg: dict):
 			episode_success=ep_successes,
 		)
 		logger.log(metrics, "evaluate_task")
-		# if cfg.plot_state_correlation:
-		# 	fig, states, combinations = plot_state_wm_state_correlation(states, wm_states, task, cfg.work_dir or None)
-		# 	if 'cartpole' in cfg.task:
-		# 		state_labels = ["X", "cos(theta)", "sin(theta)", "X_dot", "theta_dot"]
-		# 	logger.log_state_wm_prediction(fig, state_labels, states, combinations, f"statistics/state_prediction_correlation")
+		phase_sep_index = int(cfg.episode_length // 2.67)
+		states_swingup = states[:phase_sep_index]
+		states_balance = states[phase_sep_index:]
+		wm_states_swingup = wm_states[:phase_sep_index]
+		wm_states_balance = wm_states[phase_sep_index:]
+
+		if cfg.plot_state_correlation:
+			if 'cartpole' in cfg.task:
+				state_labels = ["X", "cos(theta)", "sin(theta)", "X_dot", "theta_dot"]
+
+			fig, r_states, combinations = plot_state_wm_state_correlation(states_swingup, wm_states_swingup, task, cfg.work_dir or None)
+			logger.log_state_wm_prediction(fig, state_labels, r_states, combinations, f"statistics/swingup_phase_state_prediction_correlation")
+
+			fig, r_states, combinations = plot_state_wm_state_correlation(states_balance, wm_states_balance, task, cfg.work_dir or None)
+			logger.log_state_wm_prediction(fig, state_labels, r_states, combinations,
+										   f"statistics/balance_phase_state_prediction_correlation")
+		if cfg.plot_umap:
+			fig, umap_h = plot_umap(states_swingup, wm_states_swingup, task, cfg.work_dir or None)
+			logger.log_fig(fig, f"statistics/swingup_phase_umap_projection")
+
+			fig, umap_h = plot_umap(states_balance, wm_states_balance, task, cfg.work_dir or None)
+			logger.log_fig(fig, f"statistics/balance_phase_umap_projection")
 		# if cfg.plot_ep_rollout:
 		# 	fig, states = plot_ep_rollout(states, wm_states, task, cfg.work_dir or None)
 		# 	logger.log_ep_rollout(fig, states, f"statistics/ep_roll
-		# if cfg.multitask:
-		# 	scores.append(ep_successes*100 if task.startswith('mw-') else ep_rewards/10)
-		# print(colored(f'  {task:<22}' \
-		# 	f'\tR: {ep_rewards:.01f}  ' \
-		# 	f'\tS: {ep_successes:.02f}', 'yellow'))
+		if cfg.multitask:
+			scores.append(ep_successes*100 if task.startswith('mw-') else ep_rewards/10)
+		print(colored(f'  {task:<22}' \
+			f'\tR: {ep_rewards:.01f}  ' \
+			f'\tS: {ep_successes:.02f}', 'yellow'))
 	if cfg.multitask:
 		print(colored(f'Normalized score: {np.mean(scores):.02f}', 'yellow', attrs=['bold']))
 
