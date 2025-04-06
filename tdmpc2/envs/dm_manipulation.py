@@ -17,7 +17,7 @@ def make_env(cfg):
     env = ActionRepeatWrapper(env, 2)
     env = action_scale.Wrapper(env, minimum=-1., maximum=1.)
     env = ExtendedTimeStepWrapper(env)
-    env = TimeStepToGymWrapper(env, '', cfg.task)
+    env = TimeStepToGymWrapper(env, '', cfg.task, cfg)
     # env = POMDPWrapper(env, cfg.task, cfg)
     if cfg.task == 'place_brick_features':
         observables_to_pertube_keys = ['jaco_arm/joints_pos', 'jaco_arm/joints_vel', 'jaco_arm/joints_torque', 'jaco_arm/jaco_hand/joints_pos',

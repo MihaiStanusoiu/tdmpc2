@@ -23,9 +23,10 @@ class TDMPC2(torch.nn.Module):
 		self.cfg = cfg
 		self.device = torch.device('cuda:0')
 		self.model = WorldModel(cfg).to(self.device)
-		self.uncompiled_model = self.model
-		if self.cfg.compile:
-			self.model = torch.compile(self.model, mode="reduce-overhead")
+		# self.uncompiled_model = self.model
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.model, mode="reduce-overhead")
+		lr = torch.tensor(cfg.lr, device=self.device)
 		self.optim = torch.optim.Adam([
 			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
@@ -34,9 +35,9 @@ class TDMPC2(torch.nn.Module):
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
-		], lr=self.cfg.lr, capturable=True)
+		], lr=lr, capturable=True)
 		if not self.cfg.freeze_pi:
-			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
+			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=lr, eps=1e-5, capturable=True)
 		self.model.eval()
 		self.scale = RunningScale(cfg)
 		self.cfg.iterations += 2*int(cfg.action_dim >= 20) # Heuristic for large action spaces
@@ -85,7 +86,7 @@ class TDMPC2(torch.nn.Module):
 			fp (str): Filepath to save state dict to.
 		"""
 		torch.save({
-			"model": self.uncompiled_model.state_dict(),
+			"model": self.model.state_dict(),
 			"wm_optim": self.optim.state_dict(),
 			"pi_optim": self.pi_optim.state_dict(),
 			"metrics": metrics,
@@ -157,9 +158,9 @@ class TDMPC2(torch.nn.Module):
 			return
 		# load_sd_hook(self.model, state_dict, "_Qs.")
 		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
-		self.uncompiled_model.load_state_dict(state_dict)
-		if self.cfg.compile:
-			self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
+		self.model.load_state_dict(state_dict)
+		# if self.cfg.compile:
+		# 	self.model = torch.compile(self.uncompiled_model, mode="reduce-overhead")
 		return
 
 	@property
@@ -187,13 +188,13 @@ class TDMPC2(torch.nn.Module):
 		if task is not None:
 			task = torch.tensor([task], device=self.device)
 		if self.cfg.mpc:
-			z = self.model.encode(obs, task)
+			o = self.model.encode(obs, task)
 			tensor_dt = None
 			if info.get("timestamp") is not None:
 				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
-			z, h = self.model.rnn(z, prev_act, task, h, dt=tensor_dt)
+			z, h = self.model.rnn(o, prev_act, task, h, dt=tensor_dt)
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(z, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
+			a = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 		else:
 			z = self.model.encode(obs, task)
 			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
@@ -421,14 +422,14 @@ class TDMPC2(torch.nn.Module):
 			with torch.no_grad():
 				if prev_obs is not None:
 					# ignore prev_obs and prev_act that are zero
-					mask = (prev_obs[0].abs().sum(dim=-1) > 0)  # Shape (seq_len, batch_size)
+					# mask = (prev_obs[0].abs().sum(dim=-1) > 0)  # Shape (seq_len, batch_size)
 					# first_nonzero_idx = mask.int().argmax(dim=1)  # Shape (batch_size,)
 					# prev_obs = [prev_obs[0][first_nonzero_idx[i]:, i] for i in range(self.cfg.batch_size)]
 					# prev_obs = prev_obs[0][:, first_nonzero_idx:-1, :]
 					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
 					prev_z = self.model.encode(prev_obs, task)
 					for _, (_a, _z) in enumerate(
-							zip(prev_action[0][:, :-1, :].unbind(1), prev_z[0][:, :-1, :].unbind(1))):
+							zip(prev_action.unbind(0), prev_z.unbind(0))):
 						_, h = self.model.rnn(_z, _a, task, h)
 
 		# Prepare for update
@@ -445,14 +446,15 @@ class TDMPC2(torch.nn.Module):
 		one_step_prediction_error = 0
 		consistency_loss = 0
 		for t, (_action, _next_z, _dt, _is_first) in enumerate(zip(next_act.unbind(0), next_z.unbind(0), next_dt.unbind(0), is_first.unbind(0))):
+			if t < self.cfg.horizon / 2:
+				z = h
 			z = self.model.next(z, _action, task)
 			# z, h = self.model.forward(h, _action, task, dt=_dt)
-			z_hat, h = self.model.rnn(_next_z, _action, task, h, _dt)
-			consistency_loss = consistency_loss + F.mse_loss(z, z_hat.detach()) * (self.cfg.rho) ** (t)
+			_, h = self.model.rnn(_next_z, _action, task, h, _dt)
+			consistency_loss = consistency_loss + F.mse_loss(z, h.detach()) * (self.cfg.rho) ** (t)
 			if t == 0:
 				one_step_prediction_error = consistency_loss
-			# if t < self.cfg.horizon / 2:
-			z = z_hat
+
 			zs[t+1] = z
 			hs[t+1] = h
 
@@ -471,13 +473,13 @@ class TDMPC2(torch.nn.Module):
 		# 	q_discrepancy_t = q_discrepancy[0]
 		# 	q_discrepancy_H = q_discrepancy[-1]
 
-		qs = self.model.Q(_zs, next_act, task, return_type='all')
-		reward_preds = self.model.reward(_zs, next_act, task)
+		qs = self.model.Q(_hs, next_act, task, return_type='all')
+		reward_preds = self.model.reward(_hs, next_act, task)
 
 		# Compute targets
 		with torch.no_grad():
-			# td_targets = self._td_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
-			td_targets = self._td_lambda_target(next_z, next_act, zs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_lambda_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -510,33 +512,30 @@ class TDMPC2(torch.nn.Module):
 
 		if not self.cfg.freeze_pi:
 			# Update policy
-			pi_loss, pi_grad_norm = self.update_pi(_zs.detach(),dt, task)
+			pi_loss, pi_grad_norm = self.update_pi(_hs.detach(),dt, task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
 
 		# Return training statistics
 		self.model.eval()
-		# self._first_update = False
-		info_dict = {
-			"consistency_loss": consistency_loss,
-			"reward_loss": reward_loss,
-			"value_loss": value_loss,
 
-			# "pi_loss": pi_loss,
-			"total_loss": total_loss,
-			# "Q_discrepancy_initial_state": q_discrepancy_t,
-			# "Q_discrepancy_final_state": q_discrepancy_H,
-			"one_step_prediction_error": one_step_prediction_error,
-			"grad_norm": grad_norm,
-			# "pi_grad_norm": pi_grad_norm,
-			"pi_scale": self.scale.value,
-		}
-		if not self.cfg.freeze_pi:
-			info_dict["pi_loss"] = pi_loss
-			info_dict["pi_grad_norm"] = pi_grad_norm
-		self.loss = info_dict
-		return TensorDict(self.loss).detach().mean()
+		return consistency_loss.detach(), reward_loss.detach(), value_loss.detach(), total_loss.detach(), one_step_prediction_error.detach(), grad_norm.detach(), pi_loss.detach(), pi_grad_norm.detach(), hs.detach()
+		# self._first_update = False
+		# info_dict = {
+		# 	"consistency_loss": consistency_loss,
+		# 	"reward_loss": reward_loss,
+		# 	"value_loss": value_loss,
+		# 	"total_loss": total_loss,
+		# 	"one_step_prediction_error": one_step_prediction_error,
+		# 	"grad_norm": grad_norm,
+		# 	"pi_scale": self.scale.value,
+		# 	"pi_loss": pi_loss,
+		# 	"pi_grad_norm": pi_grad_norm
+		# }
+		# self.loss = info_dict
+		# return info_dict
+
 
 	def update(self, buffer):
 		"""
@@ -567,5 +566,24 @@ class TDMPC2(torch.nn.Module):
 			h = torch.tensor(hidden, device=self.device).detach()
 		else:
 			h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		return self._update(None, None, h, obs, action, reward, dt, is_first, **kwargs)
+		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm, hs = self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], h, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
+		# log h rank
+		hs_TxB = hs.reshape(-1, hs.shape[-1])
+		hs_rank = torch.linalg.matrix_rank(hs_TxB, tol=1e-5)
+		_, S, _ = torch.linalg.svd(hs_TxB)
+		effective_rank = torch.exp(-torch.sum(S / (S.sum() + 1e-5) * torch.log(S / (S.sum() + 1e-5) + 1e-5)))
+		self.loss = TensorDict({
+			"consistency_loss": consistency_loss,
+			"reward_loss": reward_loss,
+			"value_loss": value_loss,
+			"total_loss": total_loss,
+			"one_step_prediction_error": one_step_prediction_error,
+			"grad_norm": grad_norm,
+			"pi_scale": self.scale.value,
+			"pi_loss": pi_loss,
+			"pi_grad_norm": pi_grad_norm,
+			"hs_rank": hs_rank,
+			"hs_effective_rank": effective_rank
+		})
+		return self.loss
 

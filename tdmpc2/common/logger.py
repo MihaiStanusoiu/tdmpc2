@@ -313,23 +313,26 @@ class Logger:
         # log received fig
         self._wandb.log({key: fig})
 
-        # Log Data to W&B
-        table = self._wandb.Table(columns=["State", "True Value", "Best Fit Value"])
+        # # Log Data to W&B
+        # table = self._wandb.Table(columns=["State", "True Value", "Best Fit Value"])
+        #
+        # for i in range(states.shape[0]):
+        #     for j in range(states.shape[1]):
+        #         table.add_data(state_labels[j], states[i, j], predicted_states_best_fit[i, j])
+        #
+        # self._wandb.log({"state_predictions": table})
+        #
+        # # Optional: Log scatter plots directly
+        # for i, label in enumerate(state_labels):
+        #     self._wandb.log({
+        #         f"{key}/{label}": self._wandb.plot.scatter(
+        #             table, x="True Value", y="Best Fit Value",
+        #             title=f"Scatter Plot for {label}"
+        #         )
+        #     })
 
-        for i in range(states.shape[0]):
-            for j in range(states.shape[1]):
-                table.add_data(state_labels[j], states[i, j], predicted_states_best_fit[i, j])
-
-        self._wandb.log({"state_predictions": table})
-
-        # Optional: Log scatter plots directly
-        for i, label in enumerate(state_labels):
-            self._wandb.log({
-                f"{key}/{label}": self._wandb.plot.scatter(
-                    table, x="True Value", y="Best Fit Value",
-                    title=f"Scatter Plot for {label}"
-                )
-            })
+    def log_fig(self, fig, key):
+        self._wandb.log({key: fig})
 
     def log(self, d, category="train"):
         assert category in CAT_TO_COLOR.keys(), f"invalid category: {category}"

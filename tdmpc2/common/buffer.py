@@ -22,7 +22,7 @@ class Buffer():
 			strict_length=True,
 			compile=self.cfg.compile
 		)
-		self._batch_size = cfg.batch_size * (cfg.horizon+1)
+		self._batch_size = cfg.batch_size * (cfg.horizon+cfg.burn_in+1)
 		# self._batch_size = cfg.batch_size
 		self._num_eps = 0
 
@@ -79,7 +79,7 @@ class Buffer():
 		hist_obs = td.get('hist_obs').contiguous()
 		hist_act = td.get('hist_act').contiguous()
 		hidden = td.get('hidden')[0]
-		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
+		reward = td.get('reward')[1+self.cfg.burn_in:].unsqueeze(-1).contiguous()
 		# check if any done value is true, or 1.0
 		done = td.get('done')[1:].unsqueeze(-1).contiguous()
 		dt = td.get('dt').unsqueeze(-1).contiguous()
@@ -119,6 +119,6 @@ class Buffer():
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
-		td = self._buffer.sample().view(-1, self.cfg.horizon+1).permute(1, 0)
+		td = self._buffer.sample().view(-1, self.cfg.horizon+self.cfg.burn_in+1).permute(1, 0)
 		# td = self._buffer.sample()
 		return self._prepare_batch(td)

@@ -1,7 +1,11 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import seaborn as sns
+import umap
 from matplotlib import rc
+from sklearn.cross_decomposition import CCA
+from sklearn.linear_model import Ridge
+
 rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 ## for Palatino and other serif fonts use:
 #rc('font',**{'family':'serif','serif':['Palatino']})
@@ -38,12 +42,62 @@ def plot_ep_rollout(states, wm_states, rewards, title, save_path):
 	# return plot
 	return fig, states, predicted_states_best_fit
 
+def plot_umap(states: np.ndarray, wm_states: np.ndarray, title, save_path):
+	# Apply UMAP to reduce to 2D
+	umap_proj = umap.UMAP(n_components=2, random_state=42).fit_transform(wm_states)
+	umap_proj_actual = umap.UMAP(n_components=2, random_state=42).fit_transform(states)
+
+	# Plot the 2D representations
+	log_cart_velocity = np.log(np.abs(states[:, 3]) + 1e-6)
+	log_pole_velocity = np.log(np.abs(states[:, 4]) + 1e-6)
+
+	# Plot 1: UMAP projection colored by log(cart velocity)
+	fig = plt.figure(figsize=(12, 10))
+
+	plt.subplot(2, 2, 1)
+	scatter1 = plt.scatter(umap_proj[:, 0], umap_proj[:, 1], c=log_cart_velocity, cmap="viridis", alpha=0.7)
+	plt.colorbar(scatter1, label="Log Cart Velocity")
+	plt.title("UMAP Projection of Hidden States (Colored by Log Cart Velocity)")
+	plt.xlabel("UMAP 1")
+	plt.ylabel("UMAP 2")
+
+	# Plot 2: UMAP projection colored by pole angular velocity
+	plt.subplot(2, 2, 2)
+	scatter2 = plt.scatter(umap_proj[:, 0], umap_proj[:, 1], c=log_pole_velocity, cmap="plasma", alpha=0.7)
+	plt.colorbar(scatter2, label="Pole Angular Velocity")
+	plt.title("UMAP Projection of Hidden States (Colored by Log Pole Angular Velocity)")
+	plt.xlabel("UMAP 1")
+	plt.ylabel("UMAP 2")
+
+	plt.subplot(2, 2, 3)
+	scatter1 = plt.scatter(umap_proj_actual[:, 0], umap_proj_actual[:, 1], c=log_cart_velocity, cmap="viridis", alpha=0.7)
+	plt.colorbar(scatter1, label="Log Cart Velocity")
+	plt.title("UMAP Projection of Actual States (Colored by Log Cart Velocity)")
+	plt.xlabel("UMAP 1")
+	plt.ylabel("UMAP 2")
+
+	# Plot 2: UMAP projection colored by pole angular velocity
+	plt.subplot(2, 2, 4)
+	scatter2 = plt.scatter(umap_proj_actual[:, 0], umap_proj_actual[:, 1], c=log_pole_velocity, cmap="plasma", alpha=0.7)
+	plt.colorbar(scatter2, label="Pole Angular Velocity")
+	plt.title("UMAP Projection of Actual States (Colored by Log Pole Angular Velocity)")
+	plt.xlabel("UMAP 1")
+	plt.ylabel("UMAP 2")
+
+	plt.tight_layout()
+	plt.show()
+
+	return fig, umap_proj
+
 def plot_state_wm_state_correlation(states : np.ndarray, wm_states: np.ndarray, title, save_path):
 	fig, ax = plt.subplots()
 	# for each state variable, get the best linear combination of wm_states variables and their squares
 	combinations = np.hstack([wm_states, wm_states**2])
-	W, _, _, _ = np.linalg.lstsq(combinations, states, rcond=None)
-	predicted_states_best_fit = combinations @ W
+	ridge = Ridge(alpha=1.0)  # Regularization strength
+	ridge.fit(combinations, states)  # Fit the model
+	predicted_states_best_fit = ridge.predict(combinations)
+	# W, _, _, _ = np.linalg.lstsq(combinations, states, rcond=None)
+	# predicted_states_best_fit = combinations @ W
 
 	# Compute correlation coefficients
 	correlations = np.array([
@@ -52,7 +106,7 @@ def plot_state_wm_state_correlation(states : np.ndarray, wm_states: np.ndarray, 
 	])
 
 	# Plot the correlation values
-	state_labels = [r'$\chi$', r'$\dot \chi$', r'$\cos{\alpha}$', r'$\sin{\alpha}$', r'$\dot \alpha$']
+	state_labels = [r'$\chi$', r'$\cos{\alpha}$', r'$\sin{\alpha}$', r'$\dot \chi$', r'$\dot \alpha$']
 	fig, axes = plt.subplots(2, 3, figsize=(12, 8))
 
 	for i, ax in enumerate(axes.flat[:5]):
@@ -61,7 +115,7 @@ def plot_state_wm_state_correlation(states : np.ndarray, wm_states: np.ndarray, 
 		ax.set_xlabel(f"True {state_labels[i]}")
 		ax.set_ylabel(f"Best Linear Combination")
 		ax.legend()
-		ax.set_title(f"Correlation for {state_labels[i]}")
+		ax.set_title(f"Correlation coef. for {state_labels[i]}: {correlations[i]:.2f}")
 
 	plt.tight_layout()
 	plt.show()

@@ -27,7 +27,11 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		if cfg.rnn_type == 'cfc':
-			self._rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
+			self._rnn = CfC(cfg, cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+							backbone_dropout=cfg.backbone_dropout, batch_first=False,
+							return_sequences=False)
+			self._target_rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
@@ -53,6 +57,7 @@ class WorldModel(nn.Module):
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
 		self.init()
+		# self._f_rnn = torch.compile(self._f_rnn, mode="reduce-overhead")
 
 	def init(self):
 		# Create params
@@ -65,8 +70,11 @@ class WorldModel(nn.Module):
 			self._target_Qs = deepcopy(self._Qs)
 
 		# Assign params to modules
-		self._detach_Qs.params = self._detach_Qs_params
-		self._target_Qs.params = self._target_Qs_params
+		# We do this strange assignment to avoid having duplicated tensors in the state-dict -- working on a better API for this
+		delattr(self._detach_Qs, "params")
+		self._detach_Qs.__dict__["params"] = self._detach_Qs_params
+		delattr(self._target_Qs, "params")
+		self._target_Qs.__dict__["params"] = self._target_Qs_params
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
@@ -136,6 +144,10 @@ class WorldModel(nn.Module):
 		return self._encoder[self.cfg.obs](obs)
 
 	def rnn(self, z, a, task=None, h=None, dt=None):
+		readout, h = self._f_rnn(z, a, task, h, dt)
+		return readout, h
+
+	def _f_rnn(self, z, a, task=None, h=None, dt=None):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 		if z.dim() != 3:

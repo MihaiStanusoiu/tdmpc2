@@ -191,17 +191,18 @@ class OnlineTrainer(Trainer):
 			if self._step > self.cfg.seed_steps and not self.cfg.random_policy:
 				# if self.cfg.warmup_h:
 				# 	# h warmup
-				# 	h = self.agent.initial_h.detach()
 				# 	if len(self._tds) > 1:
-				# 		burn_in_tds = self._tds[-self.cfg.burn_in:-1]
-				# 		prev_obs = [td['obs'] for td in burn_in_tds]
-				# 		prev_act = [td['action'] for td in burn_in_tds]
-				# 		prev_dt = [td['dt'] for td in burn_in_tds]
-				# 		prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
-				# 		prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
-				# 		prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
 				# 		with torch.no_grad():
-				# 			_, h = self.agent.model.rnn(self.agent.model.encode(prev_obs), prev_act, h=h, dt=prev_dt)
+				# 			burn_in_tds = self._tds[-self.cfg.burn_in-1:-1]
+				# 			h = torch.tensor(burn_in_tds[0]['hidden'], device=self.agent.device)
+				# 			prev_obs = [td['obs'] for td in burn_in_tds]
+				# 			prev_act = [td['action'] for td in burn_in_tds]
+				# 			prev_dt = [td['dt'] for td in burn_in_tds]
+				# 			prev_obs = torch.cat(prev_obs).unsqueeze(1).to(self.agent.device)
+				# 			prev_act = torch.cat(prev_act).unsqueeze(1).to(self.agent.device)
+				# 			prev_dt = torch.cat(prev_dt).unsqueeze(1).to(self.agent.device)
+				# 			for i, (o, a, dt) in enumerate(zip(prev_obs, prev_act, prev_dt)):
+				# 				_, h = self.agent.model.rnn(self.agent.model.encode(o), a, h=h, dt=dt)
 				action, h_next = self.agent.act(obs, action, t0=len(self._tds)==1, h=h, info=info)
 			else:
 				action = self.env.rand_act()

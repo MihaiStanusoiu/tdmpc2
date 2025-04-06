@@ -6,7 +6,7 @@ task: dog-run
 obs: state
 sensor_noise: 0.0
 pomdp_type: None
-flicker_prob: 0.2
+flicker_prob: 0.1
 random_noise_sigma: 0.1
 random_sensor_missing_prob: 0.1
 flickering_sigma: 0.2
@@ -21,14 +21,17 @@ checkpoint: ???
 id: ???
 eval_episodes: 10
 eval_freq: 5000
-use_tensorboard: True
+use_tensorboard: False
+plot_state_correlation: False
+plot_ep_rollout: False
+plot_umap: False
 
 # training
 freeze_pi: false
 steps: 10_000_000
 batch_size: 256
-reward_coef: 0.1
-value_coef: 0.1
+reward_coef: 1.0
+value_coef: 1.0
 consistency_coef: 20
 rho: 0.8
 lr: 3e-4
@@ -36,7 +39,7 @@ burn_in: 10
 stored_h: false
 enc_lr_scale: 0.3
 rnn_lr_scale: 10.0
-grad_clip_norm: 10
+grad_clip_norm: 1000
 tau: 0.01
 discount_denom: 5
 discount_min: 0.95

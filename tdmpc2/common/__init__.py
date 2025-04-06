@@ -5,7 +5,7 @@ MODEL_SIZE = { # parameters (M)
 		  'backbone_units': 128,
 		  'backbone_layers': 1,
 		  'backbone_dropout': 0.0,
-		  'latent_dim': 128,
+		  'latent_dim': 64,
 		  'num_enc_layers': 2,
 		  'num_q': 2,
 		  'plan_horizon': 10},
