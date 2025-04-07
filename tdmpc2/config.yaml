@@ -37,8 +37,8 @@ rho: 0.8
 lr: 3e-4
 burn_in: 10
 stored_h: false
-enc_lr_scale: 0.3
-rnn_lr_scale: 10.0
+enc_lr_scale: 1.0
+pi_lr_scale: 1.0
 grad_clip_norm: 1000
 tau: 0.01
 discount_denom: 5

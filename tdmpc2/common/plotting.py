@@ -48,39 +48,39 @@ def plot_umap(states: np.ndarray, wm_states: np.ndarray, title, save_path):
 	umap_proj_actual = umap.UMAP(n_components=2, random_state=42).fit_transform(states)
 
 	# Plot the 2D representations
-	log_cart_velocity = np.log(np.abs(states[:, 3]) + 1e-6)
-	log_pole_velocity = np.log(np.abs(states[:, 4]) + 1e-6)
+	log_cart_velocity = np.log(np.abs(states[:, 4]) + 1e-6)
+	log_pole_velocity = np.log(np.abs(states[:, 5]) + 1e-6)
 
 	# Plot 1: UMAP projection colored by log(cart velocity)
 	fig = plt.figure(figsize=(12, 10))
 
 	plt.subplot(2, 2, 1)
 	scatter1 = plt.scatter(umap_proj[:, 0], umap_proj[:, 1], c=log_cart_velocity, cmap="viridis", alpha=0.7)
-	plt.colorbar(scatter1, label="Log Cart Velocity")
-	plt.title("UMAP Projection of Hidden States (Colored by Log Cart Velocity)")
+	plt.colorbar(scatter1, label="Log Velocity of Joint 1")
+	plt.title("UMAP Projection of Hidden States (Colored by Log Velocity of Joint 1)")
 	plt.xlabel("UMAP 1")
 	plt.ylabel("UMAP 2")
 
 	# Plot 2: UMAP projection colored by pole angular velocity
 	plt.subplot(2, 2, 2)
 	scatter2 = plt.scatter(umap_proj[:, 0], umap_proj[:, 1], c=log_pole_velocity, cmap="plasma", alpha=0.7)
-	plt.colorbar(scatter2, label="Pole Angular Velocity")
-	plt.title("UMAP Projection of Hidden States (Colored by Log Pole Angular Velocity)")
+	plt.colorbar(scatter2, label="Log Velocity of Joint 2")
+	plt.title("UMAP Projection of Hidden States (Colored by Log Velocity of Joint 2)")
 	plt.xlabel("UMAP 1")
 	plt.ylabel("UMAP 2")
 
 	plt.subplot(2, 2, 3)
 	scatter1 = plt.scatter(umap_proj_actual[:, 0], umap_proj_actual[:, 1], c=log_cart_velocity, cmap="viridis", alpha=0.7)
-	plt.colorbar(scatter1, label="Log Cart Velocity")
-	plt.title("UMAP Projection of Actual States (Colored by Log Cart Velocity)")
+	plt.colorbar(scatter1, label="Log Velocity of Joint 1")
+	plt.title("UMAP Projection of Actual States (Colored by Log Velocity of Joint 1)")
 	plt.xlabel("UMAP 1")
 	plt.ylabel("UMAP 2")
 
 	# Plot 2: UMAP projection colored by pole angular velocity
 	plt.subplot(2, 2, 4)
 	scatter2 = plt.scatter(umap_proj_actual[:, 0], umap_proj_actual[:, 1], c=log_pole_velocity, cmap="plasma", alpha=0.7)
-	plt.colorbar(scatter2, label="Pole Angular Velocity")
-	plt.title("UMAP Projection of Actual States (Colored by Log Pole Angular Velocity)")
+	plt.colorbar(scatter2, label="Log Velocity of Joint 2")
+	plt.title("UMAP Projection of Actual States (Colored by Log Velocity of Joint 2)")
 	plt.xlabel("UMAP 1")
 	plt.ylabel("UMAP 2")
 

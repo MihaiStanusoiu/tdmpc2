@@ -29,15 +29,15 @@ class TDMPC2(torch.nn.Module):
 		lr = torch.tensor(cfg.lr, device=self.device)
 		self.optim = torch.optim.Adam([
 			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
-			{'params': self.model._rnn.parameters()},
-			{'params': self.model._dynamics.parameters()},
-			{'params': self.model._reward.parameters()},
+			{'params': self.model._rnn.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
+			{'params': self.model._dynamics.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
+			{'params': self.model._reward.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
 		], lr=lr, capturable=True)
 		if not self.cfg.freeze_pi:
-			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=lr, eps=1e-5, capturable=True)
+			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=lr*torch.tensor(self.cfg.pi_lr_scale, device=self.device), eps=1e-5, capturable=True)
 		self.model.eval()
 		self.scale = RunningScale(cfg)
 		self.cfg.iterations += 2*int(cfg.action_dim >= 20) # Heuristic for large action spaces
@@ -478,8 +478,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
-			# td_targets = self._td_lambda_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_lambda_target(next_z, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
