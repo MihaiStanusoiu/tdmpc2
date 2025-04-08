@@ -4,6 +4,10 @@ import torch.nn.functional as F
 from tensordict import from_modules
 from copy import deepcopy
 
+from common import init
+from ncps.torch import CfC, LTC
+import torch.distributions as td
+
 class Ensemble(nn.Module):
 	"""
 	Vectorized ensemble of modules.
@@ -148,6 +152,115 @@ def conv(in_shape, num_channels, act=None):
 		layers.append(act)
 	return nn.Sequential(*layers)
 
+class Dirac:
+    def __init__(self, loc):
+        self.loc = loc  # a tensor
+
+    def sample(self):
+        return self.loc.detach()
+
+    def rsample(self):
+        return self.loc
+
+class Encoder(nn.Module):
+	"""
+	Encoder for TD-MPC2.
+	Encodes the state and image observations into a latent space.
+	"""
+
+	def __init__(self, cfg):
+		super().__init__()
+		self.cfg = cfg
+		self.initial_h = nn.Parameter(torch.zeros(1, cfg.hidden_dim))
+		if cfg.rnn_type == 'cfc':
+			self._rnn = CfC(cfg, cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+							backbone_dropout=cfg.backbone_dropout, batch_first=False,
+							return_sequences=False)
+			self._target_rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
+								   backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+								   backbone_dropout=cfg.backbone_dropout, batch_first=False,
+								   return_sequences=False)
+		elif cfg.rnn_type == 'cfc_pure':
+			self._rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+							backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False,
+							return_sequences=False)
+
+	def forward(self, z, a, h=None, dt=None):
+		if z.dim() != 3:
+			z = z.unsqueeze(0)
+		if a.dim() != 3:
+			a = a.unsqueeze(0)
+		z = torch.cat([z, a], dim=-1)
+		if h is None:
+			h = self.initial_h.expand(z.shape[1], -1)
+		# if dt is None:
+		# 	dt = torch.ones((z.shape[0], z.shape[1], 1), device=h.device, requires_grad=False)
+		_, h = self._rnn(z, h, dt)
+		return h, h
+
+class DetDynamics(nn.Module):
+	def __init__(
+		self, cfg
+	):
+		super().__init__()
+		self.cfg = cfg
+		self.model = self._build_model()
+		self.apply(init.weight_init)
+
+	def _build_model(self):
+		model = [nn.Linear(self.cfg.action_dim + self.cfg.latent_dim, self.cfg.hidden_dim)]
+		model += [nn.ELU()]
+		for i in range(self.cfg.num_dyn_layers - 1):
+			model += [nn.Linear(self.cfg.hidden_dim, self.cfg.hidden_dim)]
+			model += [nn.ELU()]
+		model += [
+			nn.Linear(
+				self.cfg.hidden_dim,
+				self.cfg.latent_dim if self.cfg.zp else self.cfg.obs_dim,
+			)
+		]
+		return nn.Sequential(*model)
+
+	def forward(self, z, action):
+		x = torch.cat([z, action], axis=-1)
+		loc = self.model(x)
+		return Dirac(loc)
+
+class StochDynamics(nn.Module):
+	def __init__(
+			self, cfg
+	):
+		super().__init__()
+		self.cfg = cfg
+		self.std_min = 0.1
+		self.std_max = 10.0
+		self.model = self._build_model()
+		self.apply(init.weight_init)
+
+	def _build_model(self):
+		model = [nn.Linear(self.cfg.action_dim + self.cfg.latent_dim, self.cfg.hidden_dim)]
+		model += [nn.ELU()]
+		for i in range(self.cfg.num_dyn_layers - 1):
+			model += [nn.Linear(self.cfg.hidden_dim, self.cfg.hidden_dim)]
+			model += [nn.ELU()]
+		model += [
+			nn.Linear(
+				self.cfg.hidden_dim,
+				2 * self.cfg.latent_dim if self.cfg.zp else 2 * self.cfg.obs_dim,
+			)
+		]
+		return nn.Sequential(*model)
+
+	def forward(self, z, action):
+		x = torch.cat([z, action], axis=-1)
+		x = self.model(x)
+		mean, std = torch.chunk(x, 2, -1)
+		mean = 30 * torch.tanh(mean / 30)
+		std = self.std_max - F.softplus(self.std_max - std)
+		std = self.std_min + F.softplus(std - self.std_min)
+		return td.independent.Independent(td.Normal(mean, std), 1)
 
 def enc(cfg, out={}):
 	"""
@@ -166,6 +279,7 @@ def enc(cfg, out={}):
 	for k in cfg.obs_shape.keys():
 		if k == 'state':
 			out[k] = nn.Sequential(nn.Identity())
+
 	return nn.ModuleDict(out)
 
 

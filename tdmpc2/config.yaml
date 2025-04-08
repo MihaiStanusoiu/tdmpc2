@@ -30,16 +30,16 @@ plot_umap: False
 freeze_pi: false
 steps: 10_000_000
 batch_size: 256
-reward_coef: 1.0
-value_coef: 1.0
-consistency_coef: 20
+reward_coef: 0.1
+value_coef: 0.1
+consistency_coef: 20.0
 rho: 0.8
 lr: 3e-4
 burn_in: 10
 stored_h: false
 enc_lr_scale: 1.0
 pi_lr_scale: 1.0
-grad_clip_norm: 1000
+grad_clip_norm: 10
 tau: 0.01
 discount_denom: 5
 discount_min: 0.95
@@ -79,8 +79,11 @@ vmax: +10
 
 # architecture
 model_size: ???
+zp: false
+stoch_dyn: false
 rnn_type: cfc
 num_enc_layers: 2
+num_dyn_layers: 2
 enc_dim: 256
 num_channels: 32
 mlp_dim: 512
