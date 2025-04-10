@@ -27,7 +27,7 @@ class WorldModel(nn.Module):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
 		if cfg.rnn_type == 'cfc':
-			self._rnn = CfC(cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+			self._rnn = CfC(cfg, cfg.latent_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)

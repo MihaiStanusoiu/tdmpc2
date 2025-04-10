@@ -139,7 +139,7 @@ def evaluate(cfg: dict):
 						s = info.get('full_obs')
 					state.append(s)
 					# append random numpy array to wm_state
-					wm_state.append(hidden.cpu().numpy())
+					wm_state.append(hidden_next.cpu().numpy())
 				end_time = time.time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = env.step(action)
@@ -165,14 +165,16 @@ def evaluate(cfg: dict):
 		states = np.vstack(state)
 		wm_states = np.vstack(wm_state)
 		ep_rewards = np.mean(ep_rewards)
+		ep_rewards_std = np.std(ep_rewards)
 		ep_successes = np.mean(ep_successes)
 		metrics = dict(
 			task=task_idx,
-			episode_reward=ep_rewards,
+			episode_rewards=ep_rewards,
+			episode_rewards_std=ep_rewards_std,
 			episode_success=ep_successes,
 		)
 		logger.log(metrics, "evaluate_task")
-		phase_sep_index = int(cfg.episode_length // 2.67)
+		phase_sep_index = int(cfg.episode_length // 2.7)
 		states_swingup = states[:phase_sep_index]
 		states_balance = states[phase_sep_index:]
 		wm_states_swingup = wm_states[:phase_sep_index]
