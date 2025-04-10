@@ -446,9 +446,10 @@ class TDMPC2(torch.nn.Module):
 		hs[0] = h
 		one_step_prediction_error = 0
 		consistency_loss = 0
+		obs_variance = torch.tensor(0.0, dtype=torch.float, device=self.device)
 		for t, (_action, _next_obs, _dt, _is_first) in enumerate(zip(next_act.unbind(0), next_obs.unbind(0), next_dt.unbind(0), is_first.unbind(0))):
-			# if (self.cfg.zp and t < self.cfg.horizon / 2) or not self.cfg.zp:
-			# 	z = h
+			if (self.cfg.zp and t < self.cfg.horizon / 2) or not self.cfg.zp:
+				z = h
 			z = self.model.next(z, _action)
 			rnn_input = _next_obs
 			if not self.cfg.zp and t >= self.cfg.horizon / 2:
@@ -459,16 +460,20 @@ class TDMPC2(torch.nn.Module):
 					consistency_loss = consistency_loss - z.log_prob(z_hat.detach()).unsqueeze(-1).mean() * (self.cfg.rho) ** (
 						t)
 				else:
-					consistency_loss = consistency_loss + F.mse_loss(z.rsample(), h.detach()) * (self.cfg.rho) ** (t)
+					z = z.rsample()
+					consistency_loss = consistency_loss + F.mse_loss(z, z_hat.detach()) * (self.cfg.rho) ** (t)
 			else:
 				if self.cfg.stoch_dyn:
-					consistency_loss = consistency_loss - z.log_prob(_next_obs).unsqueeze(-1) * self.kl_reg * (self.cfg.rho) ** (t)
+					obs_variance += z.base_dist.variance.mean()
+					kl = -z.log_prob(_next_obs).unsqueeze(-1).mean()
+					kl = torch.clip(kl, min=1.0)
+					consistency_loss = consistency_loss + kl * (self.cfg.rho) ** (t)
 				else:
 					consistency_loss = consistency_loss + F.mse_loss(z.rsample(), _next_obs.detach()) * (self.cfg.rho) ** (t)
+				z = z_hat
 			if t == 0:
 				one_step_prediction_error = consistency_loss
-			z = z_hat
-			zs[t+1] = z_hat
+			zs[t+1] = z
 			hs[t+1] = h
 
 		# Predictions
@@ -491,8 +496,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			# td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
-			td_targets = self._td_lambda_target(next_obs, next_act, zs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_lambda_target(next_obs, next_act, zs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -505,15 +510,18 @@ class TDMPC2(torch.nn.Module):
 			for _, qs_unbind_unbind in enumerate(qs_unbind.unbind(0)):
 				value_loss = value_loss + math.soft_ce(qs_unbind_unbind, td_targets_unbind, self.cfg).mean() * self.cfg.rho**t
 
-		if not self.cfg.stoch_dyn:
-			consistency_loss = consistency_loss / self.cfg.horizon
-		else:
-			consistency_loss = consistency_loss.mean()
+		consistency_loss = consistency_loss / self.cfg.horizon
+		# else:
+		# 	consistency_loss = consistency_loss.mean()
 		reward_loss = reward_loss / self.cfg.horizon
 		value_loss = value_loss / (self.cfg.horizon * self.cfg.num_q)
+		obs_variance = obs_variance / self.cfg.horizon
 		# value_loss = value_loss / (self.cfg.num_q)
+		consistency_coef = self.cfg.consistency_coef
+		if self.cfg.stoch_dyn:
+			consistency_coef = 0.1 * consistency_coef
 		total_loss = (
-			self.cfg.consistency_coef * consistency_loss +
+			consistency_coef * consistency_loss +
 			self.cfg.reward_coef * reward_loss +
 			self.cfg.value_coef * value_loss
 		)
@@ -536,7 +544,7 @@ class TDMPC2(torch.nn.Module):
 		# Return training statistics
 		self.model.eval()
 
-		return consistency_loss.detach(), reward_loss.detach(), value_loss.detach(), total_loss.detach(), one_step_prediction_error.detach(), grad_norm.detach(), pi_loss.detach(), pi_grad_norm.detach(), hs.detach()
+		return consistency_loss.detach(), reward_loss.detach(), value_loss.detach(), total_loss.detach(), one_step_prediction_error.detach(), grad_norm.detach(), pi_loss.detach(), pi_grad_norm.detach(), hs.detach(), obs_variance.detach()
 		# self._first_update = False
 		# info_dict = {
 		# 	"consistency_loss": consistency_loss,
@@ -582,7 +590,7 @@ class TDMPC2(torch.nn.Module):
 			h = torch.tensor(hidden, device=self.device).detach()
 		else:
 			h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm, hs = self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], h, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
+		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm, hs, obs_variance = self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], h, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
 		# log h rank
 		hs_TxB = hs.reshape(-1, hs.shape[-1])
 		hs_rank = torch.linalg.matrix_rank(hs_TxB, tol=1e-5)
@@ -594,6 +602,7 @@ class TDMPC2(torch.nn.Module):
 			"value_loss": value_loss,
 			"total_loss": total_loss,
 			"one_step_prediction_error": one_step_prediction_error,
+			"one_step_observation_variance": obs_variance,
 			"grad_norm": grad_norm,
 			"pi_scale": self.scale.value,
 			"pi_loss": pi_loss,

@@ -165,10 +165,12 @@ def evaluate(cfg: dict):
 		states = np.vstack(state)
 		wm_states = np.vstack(wm_state)
 		ep_rewards = np.mean(ep_rewards)
+		ep_rewards_std = np.std(ep_rewards)
 		ep_successes = np.mean(ep_successes)
 		metrics = dict(
 			task=task_idx,
-			episode_reward=ep_rewards,
+			episode_rewards=ep_rewards,
+			episode_rewards_std=ep_rewards,
 			episode_success=ep_successes,
 		)
 		logger.log(metrics, "evaluate_task")
