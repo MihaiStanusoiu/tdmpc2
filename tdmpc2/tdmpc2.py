@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from common import math
+from common.plotting import plot_imag_trajectories
 from common.scale import RunningScale
 from common.world_model import WorldModel
 from tensordict import TensorDict
@@ -36,7 +37,7 @@ class TDMPC2(torch.nn.Module):
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
-			{'params': [self.kl_reg] if self.cfg.stoch_dyn else []},
+			# {'params': [self.kl_reg] if self.cfg.stoch_dyn else []},
 		], lr=lr, capturable=True)
 		if not self.cfg.freeze_pi:
 			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=lr*torch.tensor(self.cfg.pi_lr_scale, device=self.device), eps=1e-5, capturable=True)
@@ -172,7 +173,7 @@ class TDMPC2(torch.nn.Module):
 		return torch.zeros(1, self.cfg.hidden_dim, device=self.device)
 
 	@torch.no_grad()
-	def act(self, obs, prev_act, t0=False, h=None, info={}, eval_mode=False, task=None):
+	def act(self, obs, prev_act, t0=False, h=None, info={}, eval_mode=False, task=None, plot_samples=False):
 		"""
 		Select an action by planning in the latent space of the world model.
 
@@ -189,16 +190,17 @@ class TDMPC2(torch.nn.Module):
 		prev_act = prev_act.to(self.device, non_blocking=True).unsqueeze(0)
 		if task is not None:
 			task = torch.tensor([task], device=self.device)
+		tensor_dt = None
+		if info.get("timestamp") is not None:
+			tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
+		z, h = self.model.encode(obs, prev_act, h, dt=tensor_dt)
 		if self.cfg.mpc:
-			tensor_dt = None
-			if info.get("timestamp") is not None:
-				tensor_dt = torch.tensor(info['timestamp'], dtype=torch.float, device=self.device, requires_grad=False).reshape((1, 1))
-			z, h = self.model.encode(obs, prev_act, h, dt=tensor_dt)
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
+			a, samples = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
+			if plot_samples:
+				fig = plot_imag_trajectories(samples, "Imaginary Trajectories", self.cfg.work_dir or None)
 		else:
-			z = self.model.encode(obs, task)
-			a = self.model.pi(z, h, task)[int(not eval_mode)][0]
+			a = self.model.pi(h, task)[int(not eval_mode)][0]
 		return a.cpu(), h
 
 	@torch.no_grad()
@@ -228,14 +230,17 @@ class TDMPC2(torch.nn.Module):
 			torch.Tensor: Action to take in the environment.
 		"""
 		# Sample policy trajectories
+		samples = torch.empty(self.cfg.plan_horizon, self.cfg.num_pi_trajs, self.cfg.hidden_dim, device=self.device)
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.plan_horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
 			_z = _h
+			samples[0] = _z
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.plan_horizon-1):
 				pi_actions[t] = self.model.pi(_z, task)[1]
 				_z, _h = self.model.forward(_z, pi_actions[t], _h, dt=_dt)
+				samples[t+1] = _z
 			pi_actions[-1] = self.model.pi(_z, task)[1]
 
 		# Initialize state and parameters
@@ -284,7 +289,7 @@ class TDMPC2(torch.nn.Module):
 		if not eval_mode:
 			a = a + std * torch.randn(self.cfg.action_dim, device=std.device)
 		self._prev_mean.copy_(mean)
-		return a.clamp(-1, 1)
+		return a.clamp(-1, 1), samples
 
 	def update_pi(self, hs, dt, task):
 		"""

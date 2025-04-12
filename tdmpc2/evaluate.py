@@ -50,12 +50,13 @@ def rollout_trajectory(cfg: dict):
 	for i in range(cfg.eval_episodes):
 		obs, done, ep_reward, info, t, hidden = env.reset(), False, 0, {
 			'timestamp': env.get_timestep()}, 0, agent.initial_h.detach()
+		action = torch.zeros(env.action_space.shape)
 
 		while not done:
 			dt = None
 			if info.get("timestamp") is not None:
 				dt = torch.tensor(info['timestamp'], dtype=torch.float, device=agent.device, requires_grad=False).reshape((1, 1))
-			pi = agent.act(obs, t0=t == 0, h=hidden, info=info, eval_mode=True, z=agent.model.encode(obs))
+			pi, next_h = agent.act(obs, action, t0=t == 0, h=hidden, info=info, eval_mode=True)
 			z, h = agent.model.forward(z, pi, h, dt=dt)
 
 
@@ -123,16 +124,29 @@ def evaluate(cfg: dict):
 			seed += 1
 			# Make environment
 			env = make_env(cfg)
-
+			one_step_obs_error = []
+			pred_obs = []
+			actual_obs = []
 			obs, done, ep_reward, info , t, hidden = env.reset(task_idx=task_idx), False, 0, {'timestamp': env.get_timestep()}, 0, agent.initial_h.detach()
+			hidden_rollout =  None
+			pred_obs.append(obs.numpy())
+			actual_obs.append(obs.numpy())
 			action = torch.zeros(env.action_space.shape)
 			times = []
 			if cfg.save_video:
 				logger.video.init(env, enabled=True)
+
+			start_h = hidden
+			actions = []
+			obss = []
 			while not done:
 				# measure and log inference time
 				start_time = time.time_ns()
+				# plot_samples = cfg.plot_mppi_samples and t % (cfg.episode_length // 8) == 0
 				action, hidden_next = agent.act(obs, action, t0=t==0, h=hidden, info=info, eval_mode=True)
+				if hidden_rollout is None:
+					hidden_rollout = hidden_next
+				actions.append(action)
 				if t > 0:
 					s = obs.numpy()
 					if cfg.pomdp_type == 'remove_velocity':
@@ -143,11 +157,49 @@ def evaluate(cfg: dict):
 				end_time = time.time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = env.step(action)
+				obss.append(obs.numpy())
+
+				if cfg.plot_mppi_samples and t % (cfg.plan_horizon) == (cfg.plan_horizon - 1) and t > 0:
+					# rollout from the start hidden state
+					rollout = []
+					h = start_h
+					for i in range(cfg.plan_horizon):
+						obs_hat = agent.model.next(h, action.unsqueeze(0).to('cuda')).sample()
+						_, h = agent.model.encode(obs_hat, action.unsqueeze(0).to('cuda'), h, dt=None)
+						rollout.append(obs_hat.cpu().squeeze(0).numpy())
+					rollout = np.array(rollout)
+					obss = np.array(obss)
+					fig = plot_ep_rollout(obss, rollout, task, cfg.work_dir or None)
+					start_h = hidden_next
+					actions = []
+					obss = []
+					# logger.log_rollout(fig, rollout, f"statistics/rollout_{t}")
+
+				if cfg.zp is False:
+					with torch.no_grad():
+						a = action.unsqueeze(0).to('cuda')
+						if t % (cfg.plan_horizon) == (cfg.plan_horizon - 1) and t > 0:
+							obs_hat = agent.model.next(hidden_next, a).sample()
+							hidden_rollout = hidden_next
+						else:
+							obs_hat = agent.model.next(hidden_rollout, a).sample()
+							_, hidden_rollout = agent.model.encode(obs_hat, a.unsqueeze(0).to('cuda'), h=hidden_rollout, dt=None)
+						# obs_hat = agent.model.next(hidden_next, action.unsqueeze(0).to('cuda')).sample()
+						obs_hat	= obs_hat.to(obs.device).squeeze(0)
+						one_step_obs_error.append(torch.nn.functional.mse_loss(obs_hat, obs).numpy())
+						pred_obs.append(obs_hat.numpy())
+						actual_obs.append(obs.numpy())
+
 				hidden = hidden_next
 				ep_reward += reward
 				t += 1
 				if cfg.save_video:
 					logger.video.record(env)
+
+			if cfg.plot_ep_rollout:
+				fig = plot_ep_rollout(np.array(actual_obs), np.array(pred_obs), task, cfg.work_dir or None)
+				# logger.log_ep_rollout(fig, states, f"statistics/ep_rollout")
+
 			ep_rewards.append(ep_reward)
 			ep_successes.append(info['success'])
 			time_mean = np.mean(times)
