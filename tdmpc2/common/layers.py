@@ -186,6 +186,8 @@ class Encoder(nn.Module):
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False,
 							return_sequences=False)
+		elif cfg.rnn_type == 'ltc':
+			self._rnn = LTC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
 
 	def forward(self, z, a, h=None, dt=None):
 		if z.dim() != 3:

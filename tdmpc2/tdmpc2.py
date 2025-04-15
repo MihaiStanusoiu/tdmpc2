@@ -37,7 +37,7 @@ class TDMPC2(torch.nn.Module):
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
-			# {'params': [self.kl_reg] if self.cfg.stoch_dyn else []},
+			{'params': [self.kl_reg] if self.cfg.stoch_dyn else []},
 		], lr=lr, capturable=True)
 		if not self.cfg.freeze_pi:
 			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=lr*torch.tensor(self.cfg.pi_lr_scale, device=self.device), eps=1e-5, capturable=True)
@@ -249,7 +249,7 @@ class TDMPC2(torch.nn.Module):
 		dt = dt.repeat(self.cfg.num_samples, 1) if dt is not None else None
 		mean = torch.zeros(self.cfg.plan_horizon, self.cfg.action_dim, device=self.device)
 		std = torch.full((self.cfg.plan_horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
-		if not t0:
+		if t0.any():
 			mean[:-1] = self._prev_mean[1:]
 		actions = torch.empty(self.cfg.plan_horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
 		if self.cfg.num_pi_trajs > 0:
@@ -437,7 +437,7 @@ class TDMPC2(torch.nn.Module):
 					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
 					for _, (_a, _z) in enumerate(
 							zip(prev_action.unbind(0), prev_obs.unbind(0))):
-						_, h = self.model.encode(_z, _a, task, h)
+						_, h = self.model.encode(_z, _a, h)
 
 		# Prepare for update
 		self.model.train()
@@ -471,7 +471,7 @@ class TDMPC2(torch.nn.Module):
 				if self.cfg.stoch_dyn:
 					obs_variance += z.base_dist.variance.mean()
 					kl = -z.log_prob(_next_obs).unsqueeze(-1).mean()
-					kl = torch.clip(kl, min=1.0)
+					# kl = torch.clip(kl, min=1.0)
 					consistency_loss = consistency_loss + kl * (self.cfg.rho) ** (t)
 				else:
 					consistency_loss = consistency_loss + F.mse_loss(z.rsample(), _next_obs.detach()) * (self.cfg.rho) ** (t)
@@ -501,8 +501,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
-			# td_targets = self._td_lambda_target(next_obs, next_act, zs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_lambda_target(next_obs, next_act, zs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -523,8 +523,8 @@ class TDMPC2(torch.nn.Module):
 		obs_variance = obs_variance / self.cfg.horizon
 		# value_loss = value_loss / (self.cfg.num_q)
 		consistency_coef = self.cfg.consistency_coef
-		if self.cfg.stoch_dyn:
-			consistency_coef = 0.1 * consistency_coef
+		# if self.cfg.stoch_dyn:
+		# 	consistency_coef = 0.1 * consistency_coef
 		total_loss = (
 			consistency_coef * consistency_loss +
 			self.cfg.reward_coef * reward_loss +
