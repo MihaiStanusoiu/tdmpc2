@@ -464,6 +464,7 @@ class TDMPC2(torch.nn.Module):
 				if self.cfg.stoch_dyn:
 					consistency_loss = consistency_loss - z.log_prob(z_hat.detach()).unsqueeze(-1).mean() * (self.cfg.rho) ** (
 						t)
+					z = z.rsample()
 				else:
 					z = z.rsample()
 					consistency_loss = consistency_loss + F.mse_loss(z, z_hat.detach()) * (self.cfg.rho) ** (t)
