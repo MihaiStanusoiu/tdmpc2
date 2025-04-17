@@ -37,7 +37,7 @@ class TDMPC2(torch.nn.Module):
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
-			{'params': [self.kl_reg] if self.cfg.stoch_dyn else []},
+			# {'params': [self.kl_reg] if self.cfg.stoch_dyn else []},
 		], lr=lr, capturable=True)
 		if not self.cfg.freeze_pi:
 			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=lr*torch.tensor(self.cfg.pi_lr_scale, device=self.device), eps=1e-5, capturable=True)
