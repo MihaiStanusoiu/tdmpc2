@@ -249,7 +249,7 @@ class TDMPC2(torch.nn.Module):
 		dt = dt.repeat(self.cfg.num_samples, 1) if dt is not None else None
 		mean = torch.zeros(self.cfg.plan_horizon, self.cfg.action_dim, device=self.device)
 		std = torch.full((self.cfg.plan_horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
-		if t0.any():
+		if not t0:
 			mean[:-1] = self._prev_mean[1:]
 		actions = torch.empty(self.cfg.plan_horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
 		if self.cfg.num_pi_trajs > 0:
