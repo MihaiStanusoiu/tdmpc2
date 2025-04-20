@@ -177,10 +177,10 @@ class Encoder(nn.Module):
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
-			self._target_rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
-								   backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
-								   backbone_dropout=cfg.backbone_dropout, batch_first=False,
-								   return_sequences=False)
+			self._target_rnn = CfC(cfg, cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
+							backbone_dropout=cfg.backbone_dropout, batch_first=False,
+							return_sequences=False)
 		elif cfg.rnn_type == 'cfc_pure':
 			self._rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
@@ -188,6 +188,15 @@ class Encoder(nn.Module):
 							return_sequences=False)
 		elif cfg.rnn_type == 'ltc':
 			self._rnn = LTC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
+		self.init()
+
+	def init(self):
+		# initialize target rnn
+		for param, target_param in zip(self._rnn.parameters(), self._target_rnn.parameters()):
+			if param.dim() == 1:
+				target_param.data.copy_(param.data)
+			else:
+				target_param.data.copy_(param.data.clone())
 
 	def forward(self, z, a, h=None, dt=None):
 		if z.dim() != 3:
@@ -202,6 +211,13 @@ class Encoder(nn.Module):
 		_, h = self._rnn(z, h, dt)
 		return h, h
 
+	def soft_update_target(self):
+		"""
+		Soft-update target encoder using Polyak averaging from _rnn, using tau from self.cfg
+		"""
+		for param, target_param in zip(self._rnn.parameters(), self._target_rnn.parameters()):
+			target_param.data.copy_(self.cfg.tau * param.data + (1.0 - self.cfg.tau) * target_param.data)
+
 class DetDynamics(nn.Module):
 	def __init__(
 		self, cfg
@@ -212,18 +228,7 @@ class DetDynamics(nn.Module):
 		self.apply(init.weight_init)
 
 	def _build_model(self):
-		model = [nn.Linear(self.cfg.action_dim + self.cfg.latent_dim, self.cfg.hidden_dim)]
-		model += [nn.ELU()]
-		for i in range(self.cfg.num_dyn_layers - 1):
-			model += [nn.Linear(self.cfg.hidden_dim, self.cfg.hidden_dim)]
-			model += [nn.ELU()]
-		model += [
-			nn.Linear(
-				self.cfg.hidden_dim,
-				self.cfg.latent_dim if self.cfg.zp else self.cfg.obs_dim,
-			)
-		]
-		return nn.Sequential(*model)
+		return mlp(self.cfg.hidden_dim + self.cfg.action_dim, 2*[self.cfg.mlp_dim], self.cfg.latent_dim if self.cfg.zp else self.cfg.obs_dim, act=None)
 
 	def forward(self, z, action):
 		x = torch.cat([z, action], axis=-1)
@@ -242,18 +247,8 @@ class StochDynamics(nn.Module):
 		self.apply(init.weight_init)
 
 	def _build_model(self):
-		model = [nn.Linear(self.cfg.action_dim + self.cfg.latent_dim, self.cfg.hidden_dim)]
-		model += [nn.ELU()]
-		for i in range(self.cfg.num_dyn_layers - 1):
-			model += [nn.Linear(self.cfg.hidden_dim, self.cfg.hidden_dim)]
-			model += [nn.ELU()]
-		model += [
-			nn.Linear(
-				self.cfg.hidden_dim,
-				2 * self.cfg.latent_dim if self.cfg.zp else 2 * self.cfg.obs_dim,
-			)
-		]
-		return nn.Sequential(*model)
+		return mlp(self.cfg.hidden_dim + self.cfg.action_dim, 2 * [self.cfg.mlp_dim],
+				   2 * self.cfg.latent_dim if self.cfg.zp else 2 * self.cfg.obs_dim, act=None)
 
 	def forward(self, z, action):
 		x = torch.cat([z, action], axis=-1)

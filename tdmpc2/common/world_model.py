@@ -127,13 +127,13 @@ class WorldModel(nn.Module):
 		z_next = self._dynamics(z, a)
 		return z_next
 
-	def forward(self, z, a, h=None, dt=None):
+	def forward(self, h, a, dt=None):
 		"""
 		Forward pass through the world model.
 		"""
-		z_next = self.next(z, a).rsample()
+		z_next = self.next(h, a).rsample()
 		if not self.cfg.zp:
-			z_next, h = self._encoder(z_next, a, h, dt=dt)
+			_, h = self._encoder(z_next, a, h, dt=dt)
 		return z_next, h
 	
 	def reward(self, h, a, task=None):

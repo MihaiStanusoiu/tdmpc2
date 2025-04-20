@@ -32,8 +32,8 @@ class TDMPC2(torch.nn.Module):
 		self.optim = torch.optim.Adam([
 			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
-			{'params': self.model._dynamics.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
-			{'params': self.model._reward.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
+			{'params': self.model._dynamics.parameters()},
+			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
@@ -196,24 +196,22 @@ class TDMPC2(torch.nn.Module):
 		z, h = self.model.encode(obs, prev_act, h, dt=tensor_dt)
 		if self.cfg.mpc:
 			torch.compiler.cudagraph_mark_step_begin()
-			a, samples = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
-			if plot_samples:
-				fig = plot_imag_trajectories(samples, "Imaginary Trajectories", self.cfg.work_dir or None)
+			a = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 		else:
 			a = self.model.pi(h, task)[int(not eval_mode)][0]
 		return a.cpu(), h
 
 	@torch.no_grad()
-	def _estimate_value(self, z, h, actions, task, dt=None):
+	def _estimate_value(self, h, actions, task, dt=None):
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G, discount = 0, 1
 		for t in range(self.cfg.plan_horizon):
-			reward = math.two_hot_inv(self.model.reward(z, actions[t], task), self.cfg)
-			z, h = self.model.forward(z, actions[t], h, dt=dt)
+			reward = math.two_hot_inv(self.model.reward(h, actions[t], task), self.cfg)
+			z, h = self.model.forward(h, actions[t], dt=dt)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
-		return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
+		return G + discount * self.model.Q(h, self.model.pi(h, task)[1], task, return_type='avg')
 
 	@torch.no_grad()
 	def _plan(self, h, t0=torch.tensor(False), dt=None, eval_mode=torch.tensor(False), task=None):
@@ -230,22 +228,17 @@ class TDMPC2(torch.nn.Module):
 			torch.Tensor: Action to take in the environment.
 		"""
 		# Sample policy trajectories
-		samples = torch.empty(self.cfg.plan_horizon, self.cfg.num_pi_trajs, self.cfg.hidden_dim, device=self.device)
 		if self.cfg.num_pi_trajs > 0:
 			pi_actions = torch.empty(self.cfg.plan_horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 			_h = h.repeat(self.cfg.num_pi_trajs, 1)
-			_z = _h
-			samples[0] = _z
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.plan_horizon-1):
-				pi_actions[t] = self.model.pi(_z, task)[1]
-				_z, _h = self.model.forward(_z, pi_actions[t], _h, dt=_dt)
-				samples[t+1] = _z
-			pi_actions[-1] = self.model.pi(_z, task)[1]
+				pi_actions[t] = self.model.pi(_h, task)[1]
+				_z, _h = self.model.forward(_h, pi_actions[t], dt=_dt)
+			pi_actions[-1] = self.model.pi(_h, task)[1]
 
 		# Initialize state and parameters
 		h = h.repeat(self.cfg.num_samples, 1) if h is not None else None
-		z = h
 		dt = dt.repeat(self.cfg.num_samples, 1) if dt is not None else None
 		mean = torch.zeros(self.cfg.plan_horizon, self.cfg.action_dim, device=self.device)
 		std = torch.full((self.cfg.plan_horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
@@ -267,7 +260,7 @@ class TDMPC2(torch.nn.Module):
 				actions = actions * self.model._action_masks[task]
 
 			# Compute elite actions
-			value = self._estimate_value(z, h, actions, task, dt=dt).nan_to_num(0)
+			value = self._estimate_value(h, actions, task, dt=dt).nan_to_num(0)
 			elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
 			elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 
@@ -289,7 +282,7 @@ class TDMPC2(torch.nn.Module):
 		if not eval_mode:
 			a = a + std * torch.randn(self.cfg.action_dim, device=std.device)
 		self._prev_mean.copy_(mean)
-		return a.clamp(-1, 1), samples
+		return a.clamp(-1, 1)
 
 	def update_pi(self, hs, dt, task):
 		"""
@@ -420,7 +413,6 @@ class TDMPC2(torch.nn.Module):
 		"""
 
 		h = hidden
-
 		with torch.no_grad():
 			next_obs = obs[1:]
 			next_act = action[1:]
@@ -502,8 +494,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			# td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
-			td_targets = self._td_lambda_target(next_obs, next_act, zs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -542,7 +534,7 @@ class TDMPC2(torch.nn.Module):
 
 		if not self.cfg.freeze_pi:
 			# Update policy
-			pi_loss, pi_grad_norm = self.update_pi(_zs.detach(),dt, task)
+			pi_loss, pi_grad_norm = self.update_pi(zs.detach(),dt, task)
 
 		# Update target Q-functions
 		self.model.soft_update_target_Q()
