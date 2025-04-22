@@ -191,7 +191,7 @@ class Logger:
             artifact = self._wandb.use_artifact(
                 self._group + '-' + str(self._seed) + '-' + str(identifier) + f':{version}', type='model'
             )
-        except:
+        except Exception as e:
             identifier = str(self._checkpoint)
             artifact = self._wandb.use_artifact(
                 self._group + '-' + str(self._seed) + '-' + str(identifier) + ':v0', type='model'

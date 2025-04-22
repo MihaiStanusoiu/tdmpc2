@@ -443,16 +443,19 @@ class TDMPC2(torch.nn.Module):
 		hs[0] = h
 		one_step_prediction_error = 0
 		consistency_loss = 0
+		value_train_index = self.cfg.horizon - self.cfg.plan_horizon
 		obs_variance = torch.tensor(0.0, dtype=torch.float, device=self.device)
 		for t, (_action, _next_obs, _dt, _is_first) in enumerate(zip(next_act.unbind(0), next_obs.unbind(0), next_dt.unbind(0), is_first.unbind(0))):
-			if (self.cfg.zp and t < self.cfg.horizon / 2) or not self.cfg.zp:
+			if (self.cfg.zp and t < value_train_index) or not self.cfg.zp:
 				z = h
 			z = self.model.next(z, _action)
 			rnn_input = _next_obs
-			if not self.cfg.zp and t >= self.cfg.horizon / 2:
+			if not self.cfg.zp and t >= value_train_index:
 				rnn_input = z.rsample()
 			z_hat, h = self.model.encode(rnn_input, _action, h, _dt)
 			if self.cfg.zp:
+				if t == self.cfg.horizon - self.cfg.plan_horizon:
+					one_step_prediction_error = F.mse_loss(z.sample(), z_hat.detach())
 				if self.cfg.stoch_dyn:
 					consistency_loss = consistency_loss - z.log_prob(z_hat.detach()).unsqueeze(-1).mean() * (self.cfg.rho) ** (
 						t)
@@ -460,6 +463,7 @@ class TDMPC2(torch.nn.Module):
 				else:
 					z = z.rsample()
 					consistency_loss = consistency_loss + F.mse_loss(z, z_hat.detach()) * (self.cfg.rho) ** (t)
+
 			else:
 				if self.cfg.stoch_dyn:
 					obs_variance += z.base_dist.variance.mean()
@@ -468,15 +472,18 @@ class TDMPC2(torch.nn.Module):
 					consistency_loss = consistency_loss + kl * (self.cfg.rho) ** (t)
 				else:
 					consistency_loss = consistency_loss + F.mse_loss(z.rsample(), _next_obs.detach()) * (self.cfg.rho) ** (t)
+
+				if t == self.cfg.horizon - self.cfg_plan_horizon:
+					one_step_prediction_error = F.mse_loss(z.rsample(), _next_obs.detach())
 				z = z_hat
-			if t == 0:
-				one_step_prediction_error = consistency_loss
-			zs[t+1] = z
+			zs[t+1] = z if not self.cfg.zp else h
 			hs[t+1] = h
 
 		# Predictions
-		_zs = zs[:-1]
-		_hs = hs[:-1]
+		_zs = zs[value_train_index:-1]
+		_hs = hs[value_train_index:-1]
+		_as = next_act[value_train_index:]
+		_rs = reward[value_train_index:]
 
 		# # Q-value discrepancy for timestep t and t+H
 		# with torch.no_grad():
@@ -489,12 +496,12 @@ class TDMPC2(torch.nn.Module):
 		# 	q_discrepancy_t = q_discrepancy[0]
 		# 	q_discrepancy_H = q_discrepancy[-1]
 
-		qs = self.model.Q(_zs, next_act, task, return_type='all')
-		reward_preds = self.model.reward(_zs, next_act, task)
+		qs = self.model.Q(_zs, _as, task, return_type='all')
+		reward_preds = self.model.reward(_zs, _as, task)
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_target(next_obs, next_act, hs[value_train_index+1:].detach(), _rs, dt[value_train_index+1:], task)
 			# td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses

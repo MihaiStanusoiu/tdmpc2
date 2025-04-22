@@ -177,7 +177,7 @@ class Encoder(nn.Module):
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
-			self._target_rnn = CfC(cfg, cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, None,
+			self._target_rnn = CfC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, cfg.latent_dim,
 							backbone_units=cfg.backbone_units, backbone_layers=cfg.backbone_layers,
 							backbone_dropout=cfg.backbone_dropout, batch_first=False,
 							return_sequences=False)
@@ -188,15 +188,15 @@ class Encoder(nn.Module):
 							return_sequences=False)
 		elif cfg.rnn_type == 'ltc':
 			self._rnn = LTC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
-		self.init()
+		# self.init()
 
-	def init(self):
-		# initialize target rnn
-		for param, target_param in zip(self._rnn.parameters(), self._target_rnn.parameters()):
-			if param.dim() == 1:
-				target_param.data.copy_(param.data)
-			else:
-				target_param.data.copy_(param.data.clone())
+	# def init(self):
+	# 	# initialize target rnn
+	# 	for param, target_param in zip(self._rnn.parameters(), self._target_rnn.parameters()):
+	# 		if param.dim() == 1:
+	# 			target_param.data.copy_(param.data)
+	# 		else:
+	# 			target_param.data.copy_(param.data.clone())
 
 	def forward(self, z, a, h=None, dt=None):
 		if z.dim() != 3:
