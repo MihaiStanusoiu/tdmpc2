@@ -494,8 +494,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
-			# td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0

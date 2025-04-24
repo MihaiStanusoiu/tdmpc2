@@ -187,7 +187,10 @@ class Encoder(nn.Module):
 							backbone_dropout=cfg.backbone_dropout, mode="pure", batch_first=False,
 							return_sequences=False)
 		elif cfg.rnn_type == 'ltc':
-			self._rnn = LTC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False, return_sequences=False)
+			self._rnn = LTC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False,
+							return_sequences=False)
+			self._target_rnn = LTC(cfg.obs_dim + cfg.action_dim + cfg.task_dim, cfg.hidden_dim, batch_first=False,
+							return_sequences=False)
 		self.init()
 
 	def init(self):
