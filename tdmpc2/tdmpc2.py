@@ -30,8 +30,8 @@ class TDMPC2(torch.nn.Module):
 		self.optim = torch.optim.Adam([
 			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
-			{'params': self.model._dynamics.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
-			{'params': self.model._reward.parameters(), 'lr': self.cfg.lr*torch.tensor(self.cfg.enc_lr_scale, device=self.device)},
+			{'params': self.model._dynamics.parameters()},
+			{'params': self.model._reward.parameters()},
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
