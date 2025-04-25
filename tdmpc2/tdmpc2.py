@@ -391,7 +391,7 @@ class TDMPC2(torch.nn.Module):
 			info_dict["pi_loss"] = pi_loss
 			info_dict["pi_grad_norm"] = pi_grad_norm
 		self.loss = info_dict
-		return TensorDict(self.loss).detach().mean()
+		return consistency_loss.detach(), reward_loss.detach(), value_loss.detach(), total_loss.detach(), one_step_prediction_error.detach(), grad_norm.detach(), pi_loss.detach(), pi_grad_norm.detach()
 
 	def update(self, buffer):
 		"""
@@ -408,4 +408,16 @@ class TDMPC2(torch.nn.Module):
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
-		return self._update(obs, action, reward, **kwargs)
+		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm = self._update(obs, action, reward, **kwargs)
+		self.loss = TensorDict({
+			"consistency_loss": consistency_loss,
+			"reward_loss": reward_loss,
+			"value_loss": value_loss,
+			"total_loss": total_loss,
+			"one_step_prediction_error": one_step_prediction_error,
+			"grad_norm": grad_norm,
+			"pi_scale": self.scale.value,
+			"pi_loss": pi_loss,
+			"pi_grad_norm": pi_grad_norm,
+		})
+		return self.loss
