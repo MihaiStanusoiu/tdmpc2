@@ -72,11 +72,17 @@ class POMDPWrapper(Wrapper):
     def observation(self, obs, info={}):
         # Single source of POMDP
         if self.pomdp_type == 'remove_velocity':
-            return obs.flatten()[self.remain_obs_idx], info
+            new_obs = obs.flatten()
+            masked_obs = new_obs[self.remain_obs_idx]
+            info['full_obs'] = obs
+            return masked_obs, info
         elif self.pomdp_type == 'flickering':
             # Note: flickering is equivalent to:
             #   flickering_and_random_sensor_missing, random_noise_and_flickering, random_sensor_missing_and_flickering
-            return obs, info
+            if np.random.rand() <= self.flicker_prob:
+                return np.zeros(obs.shape), info
+            else:
+                return obs.flatten(), info
         elif self.pomdp_type == 'random_noise':
             return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten(), info
         elif self.pomdp_type == 'random_sensor_missing':
@@ -86,8 +92,12 @@ class POMDPWrapper(Wrapper):
         elif self.pomdp_type == 'remove_velocity_and_flickering':
             # Note: remove_velocity_and_flickering is equivalent to flickering_and_remove_velocity
             # Remove velocity
-            new_obs = obs.flatten()[self.remain_obs_idx]
-            return new_obs, info
+            if np.random.rand() <= self.flicker_prob:
+                obs = np.zeros(obs.shape)
+            new_obs = obs.flatten()
+            masked_obs = new_obs[self.remain_obs_idx]
+            info['full_obs'] = new_obs
+            return masked_obs, info
         elif self.pomdp_type == 'remove_velocity_and_random_noise':
             # Note: remove_velocity_and_random_noise is equivalent to random_noise_and_remove_velocity
             # Remove velocity
@@ -103,8 +113,13 @@ class POMDPWrapper(Wrapper):
             return new_obs, info
         elif self.pomdp_type == 'flickering_and_random_noise':
             # Flickering
+            if np.random.rand() <= self.flicker_prob:
+                new_obs = np.zeros(obs.shape)
+            else:
+                new_obs = obs
+            info['full_obs'] = obs
             # Add random noise
-            return (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
+            return (new_obs + np.random.normal(0, self.random_noise_sigma, new_obs.shape)).flatten(), info
         elif self.pomdp_type == 'random_noise_and_random_sensor_missing':
             # Random noise
             new_obs = (obs + np.random.normal(0, self.random_noise_sigma, obs.shape)).flatten()
@@ -127,7 +142,7 @@ class POMDPWrapper(Wrapper):
         elif env_name == "Acrobot-v1" or env_name == "acrobot":
             remain_obs_idx = list(np.arange(0, 4))
         elif env_name == 'cartpole':
-            remain_obs_idx = list([0])
+            remain_obs_idx = list([0, 1, 2])
         elif env_name == "MountainCarContinuous-v0":
             remain_obs_idx = list([0])
         #  1. MuJoCo

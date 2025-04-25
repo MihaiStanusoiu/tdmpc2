@@ -37,4 +37,6 @@ class TensorWrapper(gym.Wrapper):
 		obs, reward, done, info = self.env.step(action.numpy())
 		info = defaultdict(float, info)
 		info['success'] = float(info['success'])
+		if info['prev_act'] is not None:
+			info['prev_act'] = self._try_f32_tensor(info['prev_act'])
 		return self._obs_to_tensor(obs), torch.tensor(reward, dtype=torch.float32), done, info

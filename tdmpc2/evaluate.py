@@ -46,6 +46,7 @@ def evaluate(cfg: dict):
 	assert torch.cuda.is_available()
 	assert cfg.eval_episodes > 0, 'Must evaluate at least 1 episode.'
 	cfg = parse_cfg(cfg)
+	seed = cfg.seed
 	set_seed(cfg.seed)
 	print(colored(f'Task: {cfg.task}', 'blue', attrs=['bold']))
 	print(colored(f'Model size: {cfg.get("model_size", "default")}', 'blue', attrs=['bold']))
@@ -60,7 +61,7 @@ def evaluate(cfg: dict):
 	# Load agent
 	agent = TDMPC2(cfg)
 
-	fp = logger.load_agent()
+	fp = logger.load_agent(version=cfg.checkpoint)
 	agent.load(fp)
 
 	# Evaluate
@@ -79,7 +80,12 @@ def evaluate(cfg: dict):
 			task_idx = None
 		ep_rewards, ep_successes = [], []
 		for i in range(cfg.eval_episodes):
-			obs, done, ep_reward, t, info = env.reset(task_idx=task_idx), False, 0, 0, {'timestep': 0.0}
+			set_seed(seed)
+			seed += 1
+			# Make environment
+			env = make_env(cfg)
+
+			obs, done, ep_reward, t, info = env.reset(task_idx=task_idx), False, 0, 0, {'timestamp': env.get_timestep()}
 			times = []
 			if cfg.save_video:
 				logger.video.init(env, enabled=True)

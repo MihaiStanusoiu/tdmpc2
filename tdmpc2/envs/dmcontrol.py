@@ -11,6 +11,7 @@ from envs.tasks import cheetah, walker, hopper, reacher, ball_in_cup, pendulum, 
 from dm_control import suite, composer, manipulation
 from torchrl.modules import distributions_maps
 
+from envs.wrappers.observation_delay_wrapper import StochasticDelayWrapper
 from envs.wrappers.pomdp_wrapper import POMDPWrapper
 
 suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom') + suite._get_tasks('loca')
@@ -161,10 +162,10 @@ class TimeStepToGymWrapper:
 		self.max_episode_steps = 500
 		self.t = 0
 		self.ts = 0.0
-		self.delay_enabled = 'flickering' in cfg.pomdp_type
-		if self.domain == 'acrobot':
-			self.dm_env._physics.model.opt.timestep /= 10
-			self.dm_env._n_sub_steps = 10
+		self.delay_enabled = cfg.delay_enabled
+		# if self.domain == 'acrobot':
+		# 	self.dm_env._physics.model.opt.timestep /= 10
+		# 	self.dm_env._n_sub_steps = 10
 		self.delay_mu = self.dm_env._n_sub_steps
 		self.delay_sigma = cfg.flickering_sigma
 
@@ -203,7 +204,8 @@ class TimeStepToGymWrapper:
 		actual_timestamp = self.dm_env._physics.data.time
 		# assert timestamp == actual_timestamp
 		info = {
-			'timestamp': timestamp
+			'timestamp': self.t,
+			"prev_act": action,
 		}
 		return self._obs_to_array(time_step.observation), time_step.reward, time_step.last() or self.t == self.max_episode_steps, info
 
@@ -230,9 +232,12 @@ def make_env(cfg):
 	env = ActionDTypeWrapper(env, np.float32)
 	env = ActionRepeatWrapper(env, 2)
 	env = action_scale.Wrapper(env, minimum=-1., maximum=1.)
-	env = ExtendedTimeStepWrapper(env)
-	env = TimeStepToGymWrapper(env, domain, task, cfg)
+	extended_env = ExtendedTimeStepWrapper(env)
+	env = TimeStepToGymWrapper(extended_env, domain, task, cfg)
 	env = POMDPWrapper(env, domain, cfg)
+	if cfg.delay_enabled:
+		delay_fn = lambda: np.random.randint(0, 6)
+		env = StochasticDelayWrapper(env, env.action_space.shape[0], delay_fn=delay_fn, max_delay=4)
 	return env
 
 

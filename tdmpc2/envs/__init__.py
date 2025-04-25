@@ -15,6 +15,10 @@ try:
 except Exception as e:
 	make_pomdp_env = missing_dependencies
 try:
+	from envs.f11tenth import make_env as make_f110_env
+except Exception as e:
+	make_f110_env = missing_dependencies
+try:
 	from envs.dmcontrol import make_env as make_dm_control_env
 except Exception as e:
 	make_dm_control_env = missing_dependencies
@@ -74,7 +78,7 @@ def make_env(cfg):
 
 	else:
 		env = None
-		for fn in [make_pomdp_env, make_dm_control_env, make_dm_manipulation_env, make_maniskill_env, make_metaworld_env, make_robosuite_env, make_myosuite_env]:
+		for fn in [make_pomdp_env, make_f110_env, make_dm_control_env, make_dm_manipulation_env, make_maniskill_env, make_metaworld_env, make_robosuite_env, make_myosuite_env]:
 			try:
 				env = fn(cfg)
 			except Exception as e:
@@ -91,4 +95,5 @@ def make_env(cfg):
 	cfg.action_dim = env.action_space.shape[0]
 	cfg.episode_length = env.max_episode_steps
 	cfg.seed_steps = max(1000, 5*cfg.episode_length)
+	# cfg.seed_steps = 200
 	return env

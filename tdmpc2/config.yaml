@@ -6,7 +6,8 @@ task: dog-run
 obs: state
 sensor_noise: 0.0
 pomdp_type: None
-flicker_prob: 0.2
+delay_enabled: false
+flicker_prob: 0.1
 random_noise_sigma: 0.1
 random_sensor_missing_prob: 0.1
 flickering_sigma: 0.1
