@@ -196,7 +196,7 @@ class TDMPC2(torch.nn.Module):
 		z, h = self.model.encode(obs, prev_act, h, dt=tensor_dt)
 		if self.cfg.mpc:
 			torch.compiler.cudagraph_mark_step_begin()
-			a = self.plan(h, t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
+			a = self.plan(h.clone(), t0=torch.tensor(t0, device=self.device), dt=tensor_dt, eval_mode=torch.tensor(eval_mode, device=self.device), task=task)
 		else:
 			a = self.model.pi(h, task)[int(not eval_mode)][0]
 		return a.cpu(), h
@@ -471,7 +471,7 @@ class TDMPC2(torch.nn.Module):
 				z = z_hat
 			if t == 0:
 				one_step_prediction_error = consistency_loss
-			zs[t+1] = z
+			zs[t+1] = z if self.cfg.zp else h
 			hs[t+1] = h
 
 		# Predictions

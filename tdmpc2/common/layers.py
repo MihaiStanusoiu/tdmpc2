@@ -234,7 +234,7 @@ class DetDynamics(nn.Module):
 		return mlp(self.cfg.hidden_dim + self.cfg.action_dim, 2*[self.cfg.mlp_dim], self.cfg.latent_dim if self.cfg.zp else self.cfg.obs_dim, act=None)
 
 	def forward(self, z, action):
-		x = torch.cat([z, action], axis=-1)
+		x = torch.cat([z, action], dim=-1)
 		loc = self.model(x)
 		return Dirac(loc)
 
@@ -254,10 +254,10 @@ class StochDynamics(nn.Module):
 				   2 * self.cfg.latent_dim if self.cfg.zp else 2 * self.cfg.obs_dim, act=None)
 
 	def forward(self, z, action):
-		x = torch.cat([z, action], axis=-1)
+		x = torch.cat([z, action], dim=-1)
 		x = self.model(x)
 		mean, std = torch.chunk(x, 2, -1)
-		mean = 30 * torch.tanh(mean / 30)
+		mean = 100 * torch.tanh(mean / 100)
 		std = self.std_max - F.softplus(self.std_max - std)
 		std = self.std_min + F.softplus(std - self.std_min)
 		return td.independent.Independent(td.Normal(mean, std), 1)
