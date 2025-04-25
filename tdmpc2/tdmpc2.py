@@ -233,7 +233,7 @@ class TDMPC2(torch.nn.Module):
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.plan_horizon-1):
 				pi_actions[t] = self.model.pi(_h, task)[1]
-				_h = self.model.forward(_h, pi_actions[t], task, dt=_dt)
+				_h = self.model.forward(_h, pi_actions[t], task, dt=_dt+t+1)
 			pi_actions[-1] = self.model.pi(_h, task)[1]
 
 		# Initialize state and parameters
@@ -400,7 +400,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, hidden, obs, action, reward, dt, is_first, task=None):
+	def _update(self, prev_obs, prev_action, prev_dt, hidden, obs, action, reward, dt, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -428,9 +428,9 @@ class TDMPC2(torch.nn.Module):
 					# prev_obs = prev_obs[0][:, first_nonzero_idx:-1, :]
 					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
 					prev_z = self.model.encode(prev_obs, task)
-					for _, (_a, _z) in enumerate(
-							zip(prev_action.unbind(0), prev_z.unbind(0))):
-						_, h = self.model.rnn(_z, _a, task, h)
+					for _, (_a, _z, _dt) in enumerate(
+							zip(prev_action.unbind(0), prev_z.unbind(0), prev_dt.unbind(0))):
+						_, h = self.model.rnn(_z, _a, task, h, _dt)
 
 		# Prepare for update
 		self.model.train()
