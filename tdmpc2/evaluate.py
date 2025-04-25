@@ -178,23 +178,23 @@ def evaluate(cfg: dict):
 					obss = []
 					# logger.log_rollout(fig, rollout, f"statistics/rollout_{t}")
 
-				if cfg.zp is False:
-					with torch.no_grad():
-						a = action.unsqueeze(0).to('cuda')
-						one_step_obs_hat = agent.model.next(hidden_next, a).sample()
-						if t % (cfg.plan_horizon) == (cfg.plan_horizon - 1) and t > 0:
-							hidden_rollout = hidden_next
-						obs_hat = agent.model.next(hidden_rollout, a).sample()
-						_, hidden_rollout = agent.model.encode(obs_hat, a.unsqueeze(0).to('cuda'), h=hidden_rollout,
-															dt=None)
-						# obs_hat = agent.model.next(hidden_next, action.unsqueeze(0).to('cuda')).sample()
-						obs_hat = obs_hat.to(obs.device).squeeze(0)
-						one_step_obs_hat = one_step_obs_hat.to(obs.device).squeeze(0)
-						multi_step_obs_error.append(torch.nn.functional.mse_loss(obs_hat, obs).numpy())
-						one_step_obs_error.append(torch.nn.functional.mse_loss(one_step_obs_hat, obs).numpy())
-						pred_obs.append(one_step_obs_hat.numpy())
-						pred_multi_step_obs.append(obs_hat.numpy())
-						actual_obs.append(obs.numpy())
+				# if cfg.zp is False:
+				# 	with torch.no_grad():
+				# 		a = action.unsqueeze(0).to('cuda')
+				# 		one_step_obs_hat = agent.model.next(hidden_next, a).sample()
+				# 		if t % (cfg.plan_horizon) == (cfg.plan_horizon - 1) and t > 0:
+				# 			hidden_rollout = hidden_next
+				# 		obs_hat = agent.model.next(hidden_rollout, a).sample()
+				# 		_, hidden_rollout = agent.model.encode(obs_hat, a.unsqueeze(0).to('cuda'), h=hidden_rollout,
+				# 											dt=None)
+				# 		# obs_hat = agent.model.next(hidden_next, action.unsqueeze(0).to('cuda')).sample()
+				# 		obs_hat = obs_hat.to(obs.device).squeeze(0)
+				# 		one_step_obs_hat = one_step_obs_hat.to(obs.device).squeeze(0)
+				# 		multi_step_obs_error.append(torch.nn.functional.mse_loss(obs_hat, obs).numpy())
+				# 		one_step_obs_error.append(torch.nn.functional.mse_loss(one_step_obs_hat, obs).numpy())
+				# 		pred_obs.append(one_step_obs_hat.numpy())
+				# 		pred_multi_step_obs.append(obs_hat.numpy())
+				# 		actual_obs.append(obs.numpy())
 
 				hidden = hidden_next
 				ep_reward += reward

@@ -257,7 +257,7 @@ class StochDynamics(nn.Module):
 		x = torch.cat([z, action], dim=-1)
 		x = self.model(x)
 		mean, std = torch.chunk(x, 2, -1)
-		mean = 100 * torch.tanh(mean / 100)
+		mean = 70 * torch.tanh(mean / 70)
 		std = self.std_max - F.softplus(self.std_max - std)
 		std = self.std_min + F.softplus(std - self.std_min)
 		return td.independent.Independent(td.Normal(mean, std), 1)

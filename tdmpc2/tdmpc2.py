@@ -207,7 +207,7 @@ class TDMPC2(torch.nn.Module):
 		G, discount = 0, 1
 		for t in range(self.cfg.plan_horizon):
 			reward = math.two_hot_inv(self.model.reward(h, actions[t], task), self.cfg)
-			z, h = self.model.forward(h, actions[t], dt=dt)
+			z, h = self.model.forward(h, actions[t], dt=dt+t+1)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
@@ -234,7 +234,7 @@ class TDMPC2(torch.nn.Module):
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.plan_horizon-1):
 				pi_actions[t] = self.model.pi(_h, task)[1]
-				_z, _h = self.model.forward(_h, pi_actions[t], dt=_dt)
+				_z, _h = self.model.forward(_h, pi_actions[t], dt=dt+t+1)
 			pi_actions[-1] = self.model.pi(_h, task)[1]
 
 		# Initialize state and parameters
@@ -401,7 +401,7 @@ class TDMPC2(torch.nn.Module):
 
 		return h
 
-	def _update(self, prev_obs, prev_action, hidden, obs, action, reward, dt, is_first, task=None):
+	def _update(self, prev_obs, prev_action, prev_dt, hidden, obs, action, reward, dt, is_first, task=None):
 		"""
 		Main update function. Corresponds to one iteration of model learning.
 		
@@ -427,9 +427,9 @@ class TDMPC2(torch.nn.Module):
 					# prev_obs = [prev_obs[0][first_nonzero_idx[i]:, i] for i in range(self.cfg.batch_size)]
 					# prev_obs = prev_obs[0][:, first_nonzero_idx:-1, :]
 					# prev_action = prev_action[0][:, first_nonzero_idx:-1, :]
-					for _, (_a, _z) in enumerate(
-							zip(prev_action.unbind(0), prev_obs.unbind(0))):
-						_, h = self.model.encode(_z, _a, h)
+					for _, (_a, _z, _dt) in enumerate(
+							zip(prev_action.unbind(0), prev_obs.unbind(0), prev_dt.unbind(0))):
+						_, h = self.model.encode(_z, _a, h, _dt)
 
 		# Prepare for update
 		self.model.train()
@@ -494,8 +494,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			# td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
-			td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0
@@ -588,7 +588,7 @@ class TDMPC2(torch.nn.Module):
 			h = torch.tensor(hidden, device=self.device).detach()
 		else:
 			h = self.initial_h.repeat(self.cfg.batch_size, 1)
-		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm, hs, obs_variance = self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], h, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
+		consistency_loss, reward_loss, value_loss, total_loss, one_step_prediction_error, grad_norm, pi_loss, pi_grad_norm, hs, obs_variance = self._update(obs[:self.cfg.burn_in], action[:self.cfg.burn_in], dt[:self.cfg.burn_in], h, obs[self.cfg.burn_in:], action[self.cfg.burn_in:], reward, dt[self.cfg.burn_in:], is_first, **kwargs)
 		# log h rank
 		hs_TxB = hs.reshape(-1, hs.shape[-1])
 		hs_rank = torch.linalg.matrix_rank(hs_TxB, tol=1e-5)
