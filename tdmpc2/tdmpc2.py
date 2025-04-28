@@ -233,7 +233,7 @@ class TDMPC2(torch.nn.Module):
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.plan_horizon-1):
 				pi_actions[t] = self.model.pi(_h, task)[1]
-				_h = self.model.forward(_h, pi_actions[t], task, dt=_dt+t+1)
+				_h = self.model.forward(_h, pi_actions[t], task, dt=_dt)
 			pi_actions[-1] = self.model.pi(_h, task)[1]
 
 		# Initialize state and parameters
