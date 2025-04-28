@@ -27,6 +27,7 @@ class TDMPC2(torch.nn.Module):
 		# self.uncompiled_model = self.model
 		# if self.cfg.compile:
 		# 	self.model = torch.compile(self.model, mode="reduce-overhead")
+		lr = torch.tensor(cfg.lr, device=self.device)
 		self.optim = torch.optim.Adam([
 			# {'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._rnn.parameters()},
@@ -35,9 +36,9 @@ class TDMPC2(torch.nn.Module):
 			{'params': self.model._Qs.parameters()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []},
 			{'params': [self.model.initial_h] if self.cfg.learned_init_h else []},
-		], lr=self.cfg.lr, capturable=True)
+		], lr=lr, capturable=True)
 		if not self.cfg.freeze_pi:
-			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
+			self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=lr, eps=torch.tensor(1e-5), capturable=True)
 		self.model.eval()
 		self.scale = RunningScale(cfg)
 		self.cfg.iterations += 2*int(cfg.action_dim >= 20) # Heuristic for large action spaces

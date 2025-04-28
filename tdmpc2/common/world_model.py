@@ -53,7 +53,7 @@ class WorldModel(nn.Module):
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
 		self.init()
-		self._f_rnn = torch.compile(self._f_rnn, mode="reduce-overhead")
+		# self._f_rnn = torch.compile(self._f_rnn, mode="reduce-overhead")
 
 	def init(self):
 		# Create params

@@ -226,7 +226,7 @@ def evaluate(cfg: dict):
 			episode_multi_step_error_std=multi_step_std,
 		)
 		logger.log(metrics, "evaluate_task")
-		phase_sep_index = int(cfg.episode_length // 2.7)
+		phase_sep_index = int(cfg.episode_length // 4)
 		states_swingup = states[:phase_sep_index]
 		states_balance = states[phase_sep_index:]
 		wm_states_swingup = wm_states[:phase_sep_index]

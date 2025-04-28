@@ -198,6 +198,7 @@ def plot_state_wm_state_correlation(states : np.ndarray, wm_states: np.ndarray, 
 
 	# Plot the correlation values
 	state_labels = [r'$\chi$', r'$\cos{\alpha}$', r'$\sin{\alpha}$', r'$\dot \chi$', r'$\dot \alpha$']
+	plt.rcParams.update({'font.size': 14})
 	fig, axes = plt.subplots(2, 3, figsize=(12, 8))
 
 	for i, ax in enumerate(axes.flat[:5]):
@@ -207,6 +208,8 @@ def plot_state_wm_state_correlation(states : np.ndarray, wm_states: np.ndarray, 
 		ax.set_ylabel(f"Best Linear Combination")
 		ax.legend()
 		ax.set_title(f"Correlation coef. for {state_labels[i]}: {correlations[i]:.2f}")
+
+	fig.delaxes(axes[5])
 
 	plt.tight_layout()
 	plt.show()
