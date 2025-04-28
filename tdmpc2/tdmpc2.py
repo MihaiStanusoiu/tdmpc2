@@ -207,7 +207,7 @@ class TDMPC2(torch.nn.Module):
 		G, discount = 0, 1
 		for t in range(self.cfg.plan_horizon):
 			reward = math.two_hot_inv(self.model.reward(h, actions[t], task), self.cfg)
-			z, h = self.model.forward(h, actions[t], dt=dt+t+1)
+			z, h = self.model.forward(h, actions[t], dt=dt)
 			G += discount * reward
 			discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
 			discount = discount * discount_update
@@ -234,7 +234,7 @@ class TDMPC2(torch.nn.Module):
 			_dt = dt.repeat(self.cfg.num_pi_trajs, 1) if dt is not None else None
 			for t in range(self.cfg.plan_horizon-1):
 				pi_actions[t] = self.model.pi(_h, task)[1]
-				_z, _h = self.model.forward(_h, pi_actions[t], dt=dt+t+1)
+				_z, _h = self.model.forward(_h, pi_actions[t], dt=_dt)
 			pi_actions[-1] = self.model.pi(_h, task)[1]
 
 		# Initialize state and parameters
@@ -494,8 +494,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Compute targets
 		with torch.no_grad():
-			td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
-			# td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			# td_targets = self._td_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
+			td_targets = self._td_lambda_target(next_obs, next_act, hs[1:].detach(), reward, dt[1:], task)
 
 		# Compute losses
 		reward_loss, value_loss = 0, 0

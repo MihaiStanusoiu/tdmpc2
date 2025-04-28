@@ -204,7 +204,7 @@ class TimeStepToGymWrapper:
 		actual_timestamp = self.dm_env._physics.data.time
 		# assert timestamp == actual_timestamp
 		info = {
-			'timestamp': self.t,
+			'timestamp': timestamp,
 			"prev_act": action,
 		}
 		return self._obs_to_array(time_step.observation), time_step.reward, time_step.last() or self.t == self.max_episode_steps, info
