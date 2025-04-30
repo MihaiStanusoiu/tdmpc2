@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from common import math
+from common.layers import api_model_conversion
 from common.scale import RunningScale
 from common.world_model import WorldModel
 from tensordict import TensorDict
@@ -102,41 +103,10 @@ class TDMPC2(torch.nn.Module):
 		state_dict = fp if isinstance(fp, dict) else torch.load(fp, map_location=torch.get_default_device(), weights_only=False)
 
 		self.loss = state_dict["metrics"]
-		self.optim.load_state_dict(state_dict['wm_optim'])
+		# self.optim.load_state_dict(state_dict['wm_optim'])
 		if not self.cfg.freeze_pi:
 			self.pi_optim.load_state_dict(state_dict['pi_optim'])
 		state_dict = state_dict["model"] if "model" in state_dict else state_dict
-		def load_sd_hook(model, local_state_dict, prefix, *args):
-			name_map = [
-				"weight", "bias", "ln.weight", "ln.bias",
-			]
-			print("Listing state dict keys (from disk)")
-			for k in list(local_state_dict.keys()):
-				print("\t", k)
-
-			sd = model.state_dict()
-			print("Listing dest state dict keys")
-			for k in list(sd.keys()):
-				print("\t", k)
-
-			print("Maps:")
-			new_sd = dict(sd)
-			for cur_prefix in (prefix, "_target"+prefix[:-1]+"_"):
-				for key, val in list(local_state_dict.items()):
-					if not key.startswith(cur_prefix[:-1]):
-						continue
-					num = key[len(cur_prefix + "params."):len(cur_prefix + "params.")+1]
-					new_key = str(int(num) // 4) + "." + name_map[int(num) % 4]
-					new_total_key = cur_prefix + 'params.' + new_key
-					print("\t", key, '-->', new_total_key)
-					del local_state_dict[key]
-					new_sd[new_total_key] = val
-					if not cur_prefix.startswith("_target"):
-						new_total_key = "_detach" + cur_prefix[:-1] + "_" + 'params.' + new_key
-						print("\t", 'DETACH', key, '-->', new_total_key)
-						new_sd[new_total_key] = val
-			local_state_dict.update(new_sd)
-			return local_state_dict
 		if load_pi_only:
 			encoder_state_dict = state_dict.copy()
 			for k, v in list(state_dict.items()):
@@ -156,7 +126,7 @@ class TDMPC2(torch.nn.Module):
 			for param in encoder['state']:
 				param.requires_grad = False
 			return
-		# load_sd_hook(self.model, state_dict, "_Qs.")
+		state_dict = api_model_conversion(self.model.state_dict(), state_dict)
 		# assert not set(TensorDict(self.model.state_dict()).keys()).symmetric_difference(set(TensorDict(state_dict).keys()))
 		self.model.load_state_dict(state_dict)
 		# if self.cfg.compile:
