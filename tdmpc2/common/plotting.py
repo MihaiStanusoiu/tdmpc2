@@ -1,5 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
+import matplotlib.animation as animation
 import seaborn as sns
 import umap
 from matplotlib import rc, cm
@@ -10,6 +11,8 @@ rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
 ## for Palatino and other serif fonts use:
 #rc('font',**{'family':'serif','serif':['Palatino']})
 rc('text', usetex=True)
+plt.rcParams.update({'font.size': 20})  # Set global font size
+
 
 def plot_state_space_heatmap(data, title, x_label, y_label, x_ticks, y_ticks, save_path):
 	fig, ax = plt.subplots()
@@ -48,6 +51,56 @@ def plot_ep_rollout(states, wm_states, title, save_path):
 	plt.savefig(save_path)
 
 	return fig
+
+def plot_ep_rollout_video(states, wm_states, title, save_path, fps=30):
+    fig, ax = plt.subplots(figsize=(12, 8))
+    num_states = states.shape[1]
+    time = np.arange(states.shape[0])
+    color_map = cm.get_cmap('viridis')
+    colors = [color_map(i) for i in np.linspace(0, 1, num_states)]
+    state_labels = [r'$\chi$', r'$\cos{\alpha}$', r'$\sin{\alpha}$', r'$\dot \chi$', r'$\dot \alpha$']
+
+    # Initialize lines for true and predicted
+    true_lines = []
+    pred_lines = []
+    for i in range(num_states):
+        (true_line,) = ax.plot([], [], color=colors[i], label=state_labels[i])
+        (pred_line,) = ax.plot([], [], '--', color=colors[i], label=f'Predicted {state_labels[i]}')
+        true_lines.append(true_line)
+        pred_lines.append(pred_line)
+
+    ax.set_xlim(0, 500)
+    y_min = np.min([states, wm_states])
+    y_max = np.max([states, wm_states])
+    ax.set_ylim(y_min - 0.1 * abs(y_min), y_max + 0.1 * abs(y_max))
+
+    ax.set_xlabel('Time Step')
+    ax.set_ylabel('State Value')
+    ax.set_title(title)
+    ax.grid(True)
+    ax.legend(loc='lower right')
+    plt.tight_layout()
+
+    def init():
+        for line in true_lines + pred_lines:
+            line.set_data([], [])
+        return true_lines + pred_lines
+
+    def update(frame):
+        for i in range(num_states):
+            true_lines[i].set_data(time[:frame], states[:frame, i])
+            pred_lines[i].set_data(time[:frame], wm_states[:frame, i])
+        return true_lines + pred_lines
+
+    ani = animation.FuncAnimation(
+        fig, update, frames=len(time), init_func=init, blit=True, interval=1000/fps
+    )
+
+    # Save animation as video
+    ani.save(save_path, fps=fps, dpi=200)
+    print(f"Saved animation to {save_path}")
+
+    plt.close(fig)
 
 def plot_imag_trajectories(samples, title, save_path):
 	# samples: shape (N, H, D)

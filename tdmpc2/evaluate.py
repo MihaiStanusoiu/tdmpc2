@@ -2,7 +2,7 @@ import os
 import time
 
 from common.logger import Logger
-from common.plotting import plot_state_wm_state_correlation, plot_ep_rollout, plot_umap
+from common.plotting import plot_state_wm_state_correlation, plot_ep_rollout, plot_umap, plot_ep_rollout_video
 
 os.environ['MUJOCO_GL'] = 'egl'
 import warnings
@@ -183,10 +183,11 @@ def evaluate(cfg: dict):
 					logger.video.record(env)
 
 			if cfg.plot_ep_rollout:
-				fig = plot_ep_rollout(np.array(actual_obs), np.array(pred_obs), f"{task} One-step Prediction", cfg.work_dir or None)
-				fig_multi_step = plot_ep_rollout(np.array(actual_obs), np.array(pred_multi_step_obs), f"{task} Multi-step Prediction", cfg.work_dir or None)
+				# fig = plot_ep_rollout(np.array(actual_obs), np.array(pred_obs), f"{task} One-step Prediction", cfg.work_dir or None)
+				fig_multi_step = plot_ep_rollout_video(np.array(actual_obs), np.array(pred_multi_step_obs), f"{task} Multi-step Prediction", f"rollout_video.mp4" or None)
 				# logger.log_fig(fig, f"statistics/ep_one_step_prediction")
-				# logger.log_fig(fig_multi_step, f"statistics/ep_multi_step_prediction")
+				logger.log_fig(fig_multi_step, f"statistics/ep_multi_step_prediction")
+				logger.log_video(i+1, f"rollout_video.mp4")
 
 			ep_rewards.append(ep_reward)
 			ep_successes.append(info['success'])
@@ -205,7 +206,7 @@ def evaluate(cfg: dict):
 			)
 			logger.log(metrics, "evaluate_ep")
 			if cfg.save_video:
-				logger.video.save(i, key=f"evaluate/videos/{task}")
+				logger.video.save(i+1, key=f"evaluate/videos/{task}")
 		states = np.vstack(state)
 		wm_states = np.vstack(wm_state)
 		ep_rewards = np.mean(ep_rewards)

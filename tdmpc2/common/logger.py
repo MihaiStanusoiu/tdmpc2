@@ -334,6 +334,9 @@ class Logger:
     def log_fig(self, fig, key):
         self._wandb.log({key: fig})
 
+    def log_video(self, step, title):
+        self._wandb.log({"rollout_video": self._wandb.Video(title, fps=30, format="mp4")}, step=step)
+
     def log(self, d, category="train"):
         assert category in CAT_TO_COLOR.keys(), f"invalid category: {category}"
         if self._wandb:
