@@ -128,6 +128,7 @@ def evaluate(cfg: dict):
 			pred_multi_step_obs = []
 			pred_obs = []
 			actual_obs = []
+			rewards = []
 			obs, done, ep_reward, info , t, hidden = env.reset(task_idx=task_idx), False, 0, {'timestamp': env.get_timestep()}, 0, agent.initial_h.detach()
 			hidden_rollout =  None
 			pred_obs.append(obs.numpy())
@@ -158,6 +159,7 @@ def evaluate(cfg: dict):
 				end_time = time.time_ns()
 				times.append((end_time - start_time) // 1_000_000)
 				obs, reward, done, info = env.step(action)
+				rewards.append(reward)
 				obss.append(obs.numpy())
 
 				with torch.no_grad():
@@ -184,10 +186,23 @@ def evaluate(cfg: dict):
 
 			if cfg.plot_ep_rollout:
 				# fig = plot_ep_rollout(np.array(actual_obs), np.array(pred_obs), f"{task} One-step Prediction", cfg.work_dir or None)
-				fig_multi_step = plot_ep_rollout_video(np.array(actual_obs), np.array(pred_multi_step_obs), f"{task} Multi-step Prediction", f"rollout_video.mp4" or None)
-				# logger.log_fig(fig, f"statistics/ep_one_step_prediction")
-				logger.log_fig(fig_multi_step, f"statistics/ep_multi_step_prediction")
-				logger.log_video(i+1, f"rollout_video.mp4")
+				fig_multi_step = plot_ep_rollout_video(np.array(actual_obs), [r'$\chi$', r'$\cos{\alpha}$', r'$\sin{\alpha}$', r'$\dot \chi$', r'$\dot \alpha$'], f"{task} States", f"states_rollout_video.mp4" or None)
+				logger.log_fig(fig_multi_step, f"statistics/states")
+				logger.log_video(i+1, f"states_rollout_video.mp4")
+
+				actions = np.expand_dims(actions, 1)
+				fig_multi_step = plot_ep_rollout_video(np.array(actions),
+													   [r'$F_x$'], f"{task} Actions",
+													   f"actions_rollout_video.mp4" or None)
+				logger.log_fig(fig_multi_step, f"statistics/actions")
+				logger.log_video(i + 1, f"actions_rollout_video.mp4")
+
+				rewards = np.expand_dims(rewards, 1)
+				fig_multi_step = plot_ep_rollout_video(np.array(rewards),
+													   [r'$r$'], f"{task} Rewards",
+													   f"rewards_rollout_video.mp4" or None)
+				logger.log_fig(fig_multi_step, f"statistics/rewards")
+				logger.log_video(i + 1, f"rewards_rollout_video.mp4")
 
 			ep_rewards.append(ep_reward)
 			ep_successes.append(info['success'])
