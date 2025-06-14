@@ -2,6 +2,7 @@ import dataclasses
 import os
 import datetime
 import re
+import uuid
 
 import numpy as np
 import pandas as pd
@@ -12,98 +13,102 @@ from common import TASK_SET
 from torch.utils.tensorboard import SummaryWriter
 
 CONSOLE_FORMAT = [
-	("iteration", "I", "int"),
-	("episode", "E", "int"),
-	("step", "I", "int"),
-	("episode_reward", "R", "float"),
-	("episode_success", "S", "float"),
-	("total_time", "T", "time"),
+    ("iteration", "I", "int"),
+    ("episode", "E", "int"),
+    ("step", "I", "int"),
+    ("episode_reward", "R", "float"),
+    ("episode_success", "S", "float"),
+    ("total_time", "T", "time"),
 ]
 
 CAT_TO_COLOR = {
-	"pretrain": "yellow",
-	"train": "blue",
-	"eval": "green",
+    "pretrain": "yellow",
+    "train": "blue",
+    "eval": "green",
     "evaluate_ep": "green",
     "evaluate_task": "green",
 }
 
 
 def make_dir(dir_path):
-	"""Create directory if it does not already exist."""
-	try:
-		os.makedirs(dir_path)
-	except OSError:
-		pass
-	return dir_path
+    """Create directory if it does not already exist."""
+    try:
+        os.makedirs(dir_path)
+    except OSError:
+        pass
+    return dir_path
 
 
 def print_run(cfg):
-	"""
-	Pretty-printing of current run information.
-	Logger calls this method at initialization.
-	"""
-	prefix, color, attrs = "  ", "green", ["bold"]
+    """
+    Pretty-printing of current run information.
+    Logger calls this method at initialization.
+    """
+    prefix, color, attrs = "  ", "green", ["bold"]
 
-	def _limstr(s, maxlen=36):
-		return str(s[:maxlen]) + "..." if len(str(s)) > maxlen else s
+    def _limstr(s, maxlen=36):
+        return str(s[:maxlen]) + "..." if len(str(s)) > maxlen else s
 
-	def _pprint(k, v):
-		print(
-			prefix + colored(f'{k.capitalize()+":":<15}', color, attrs=attrs), _limstr(v)
-		)
+    def _pprint(k, v):
+        print(
+            prefix + colored(f'{k.capitalize()+":":<15}', color, attrs=attrs), _limstr(v)
+        )
 
-	observations  = ", ".join([str(v) for v in cfg.obs_shape.values()])
-	kvs = [
-		("task", cfg.task_title),
-		("steps", f"{int(cfg.steps):,}"),
-		("observations", observations),
-		("actions", cfg.action_dim),
-		("experiment", cfg.exp_name),
-	]
-	w = np.max([len(_limstr(str(kv[1]))) for kv in kvs]) + 25
-	div = "-" * w
-	print(div)
-	for k, v in kvs:
-		_pprint(k, v)
-	print(div)
+    observations  = ", ".join([str(v) for v in cfg.obs_shape.values()])
+    kvs = [
+        ("task", cfg.task_title),
+        ("steps", f"{int(cfg.steps):,}"),
+        ("observations", observations),
+        ("actions", cfg.action_dim),
+        ("experiment", cfg.exp_name),
+    ]
+    w = np.max([len(_limstr(str(kv[1]))) for kv in kvs]) + 25
+    div = "-" * w
+    print(div)
+    for k, v in kvs:
+        _pprint(k, v)
+    print(div)
 
 
 def cfg_to_group(cfg, return_list=False):
-	"""
-	Return a wandb-safe group name for logging.
-	Optionally returns group name as list.
-	"""
-	lst = [cfg.task, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
-	return lst if return_list else "-".join(lst)
+    """
+    Return a wandb-safe group name for logging.
+    Optionally returns group name as list.
+    """
+
+    if cfg.wandb_group != '???':
+        lst = [cfg.wandb_group]
+    else:
+        lst = [cfg.task, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
+    return lst if return_list else "-".join(lst)
 
 
 class VideoRecorder:
-	"""Utility class for logging evaluation videos."""
+    """Utility class for logging evaluation videos."""
 
-	def __init__(self, cfg, wandb, fps=15):
-		self.cfg = cfg
-		self._save_dir = make_dir(cfg.work_dir / 'eval_video')
-		self._wandb = wandb
-		self.fps = fps
-		self.frames = []
-		self.enabled = False
+    def __init__(self, cfg, wandb, fps=30):
+        self.cfg = cfg
+        self._save_dir = make_dir(cfg.work_dir / 'eval_video')
+        self._wandb = wandb
+        self.fps = fps
+        self.frames = []
+        self.enabled = False
 
-	def init(self, env, enabled=True):
-		self.frames = []
-		self.enabled = self._save_dir and self._wandb and enabled
-		self.record(env)
+    def init(self, env, enabled=True):
+        self.frames = []
+        self.enabled = self._save_dir and self._wandb and enabled
+        self.record(env)
 
-	def record(self, env):
-		if self.enabled:
-			self.frames.append(env.render(mode='rgb_array'))
+    def record(self, env):
+        if self.enabled:
+            self.frames.append(env.render(mode='rgb_array'))
 
-	def save(self, step, key='videos/eval_video'):
-		if self.enabled and len(self.frames) > 0:
-			frames = np.stack(self.frames)
-			return self._wandb.log(
-				{key: self._wandb.Video(frames.transpose(0, 3, 1, 2), fps=self.fps, format='mp4')}, step=step
-			)
+    def save(self, step, key='videos/eval_video'):
+        if self.enabled and len(self.frames) > 0:
+            frames = np.stack(self.frames)
+            return self._wandb.log(
+                {key: self._wandb.Video(frames.transpose(0, 3, 1, 2), fps=self.fps, format='mp4')}, step=step
+            )
 
 
 class TensorBoardLogger:
@@ -153,19 +158,19 @@ class Logger:
             id=str(cfg.id) if cfg.id != '???' else None,
 			name=str(cfg.exp_name),
             resume='allow' if cfg.checkpoint != '???' else None,
-			group=self._group,
-			tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
-			dir=self._log_dir,
-			config=dataclasses.asdict(cfg),
-		)
+            group=self._group,
+            # tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
+            dir=self._log_dir,
+            config=dataclasses.asdict(cfg),
+        )
 
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
         self._wandb = wandb
         self._video = (
-			VideoRecorder(cfg, self._wandb)
-			if self._wandb and cfg.save_video
-			else None
-		)
+            VideoRecorder(cfg, self._wandb)
+            if self._wandb and cfg.save_video
+            else None
+        )
 
         if self._use_tensorboard:
             self._tensorboard_logger = TensorBoardLogger(cfg)
@@ -303,6 +308,34 @@ class Logger:
             d['episode_success+avg_metaworld'] = metaworld_success
             print(colored(f'  {"metaworld":<22}\tR: {metaworld_reward:.01f}', 'yellow', attrs=['bold']))
             print(colored(f'  {"metaworld":<22}\tS: {metaworld_success:.02f}', 'yellow', attrs=['bold']))
+
+    def log_state_wm_prediction(self, fig, state_labels, states, predicted_states_best_fit, key="state_prediction_correlation"):
+        # log received fig
+        self._wandb.log({key: fig})
+
+        # # Log Data to W&B
+        # table = self._wandb.Table(columns=["State", "True Value", "Best Fit Value"])
+        #
+        # for i in range(states.shape[0]):
+        #     for j in range(states.shape[1]):
+        #         table.add_data(state_labels[j], states[i, j], predicted_states_best_fit[i, j])
+        #
+        # self._wandb.log({"state_predictions": table})
+        #
+        # # Optional: Log scatter plots directly
+        # for i, label in enumerate(state_labels):
+        #     self._wandb.log({
+        #         f"{key}/{label}": self._wandb.plot.scatter(
+        #             table, x="True Value", y="Best Fit Value",
+        #             title=f"Scatter Plot for {label}"
+        #         )
+        #     })
+
+    def log_fig(self, fig, key):
+        self._wandb.log({key: fig})
+
+    def log_video(self, step, title):
+        self._wandb.log({"rollout_video": self._wandb.Video(title, fps=30, format="mp4")}, step=step)
 
     def log(self, d, category="train"):
         assert category in CAT_TO_COLOR.keys(), f"invalid category: {category}"

@@ -11,6 +11,7 @@ flicker_prob: 0.1
 random_noise_sigma: 0.1
 random_sensor_missing_prob: 0.1
 flickering_sigma: 0.1
+plot_ep_rollout: false
 # robosuite specific
 rs_env_name: PickPlaceSingle
 rs_robots: IIWA
