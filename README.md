@@ -1,3 +1,39 @@
+<h1>LNN-TDMPC2</span></h1>
+
+Adaptation of TDMPC2 with [AIS](https://jmlr.org/papers/v23/20-1165.html) world models using Liquid Neural Networks. Suitable for continuous control tasks with partial observability (sensor noise, flickering, no velocity states etc.). Recommended model size is `0.5` for lightweight applications. 
+
+Currently only [LTC](https://ojs.aaai.org/index.php/AAAI/article/view/16936) and [CfC](https://www.nature.com/articles/s42256-022-00556-7) are supported. 
+
+## Setup 
+
+Follow the **Getting Started** section of the original TDMPC2 repository to set up the environment. Additionally, install the `ncps` package for the LTC and CfC support.
+
+## Usage
+
+Partially observable variants of the **DMControl** tasks used for evaluation can be toggled by setting the `pomdp_type` parameter in `config.yaml`.
+
+Additional `config.yaml` parameters:
+
+| Parameter  | Description
+|------------| --- |
+| `use_ais` | Whether to use AIS world models. Default is `true`.
+| `hidden_dim` | Number of recurrent neurons. Default is `256` for the default TDMPC2 model size.
+| `learned_init_h` | Whether to learn the initial hidden state. Default is `false`.
+| `warmup_h` | Whether to warm up the hidden state during training (compute hidden state from an initial subslice of the trajectory batch with no gradient flow). Default is `false`.
+| `rnn_type` | Type of RNN to use for AIS world models. Possible values: `ltc`, `cfc`. Default is `cfc`.
+| `pomdp_type` | Type of partial observability. Possible values: "remove_velocity", "random_noise", "random_sensor_missing", "flickering", "remove_velocity_and_flickering", "remove_velocity_and_random_noise", "remove_velocity_and_random_sensor_missing", "flickering_and_random_noise", "random_noise_and_random_sensor_missing", "random_sensor_missing_and_random_noise".
+| `flicker_prob` | Probability of flickering. Default is 0.1.
+| `random_noise_sigma` | Standard deviation of random noise. Default is 0.1.
+| `random_sensor_missing_prob` | Probability of sensor missing. Default is 0.1.
+| `flickering_sigma` | Standard deviation of flickering noise. Default is 0.2.
+| `stored_h` | Whether to store the hidden states in the Replay Buffer. Default is `false`.
+|  `lmbda` | Lambda paramterer for TD(λ) targets. Default is 0.5.
+
+The config file also includes further configurable parameters, such as for **WandB** logging.
+For general usage, see the original TDMPC2 README below.
+
+----
+
 <h1>TD-MPC2</span></h1>
 
 Official implementation of
